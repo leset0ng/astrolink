@@ -173,6 +173,15 @@ export class TestController {
       await this.probe(link, link.maxMessageBytes)
       if (!this.current(generation)) return
       this.record(`${link.maxMessageBytes} B 最大消息回包通过`)
+      // These are raw SDUs; the external peer records receipt independently.
+      // Local submission is deliberately not reported as an application echo.
+      await link.send(new Uint8Array(0))
+      if (!this.current(generation)) return
+      this.view.sent++
+      await link.send(new Uint8Array([0xa5]))
+      if (!this.current(generation)) return
+      this.view.sent++
+      this.record("0 B / 1 B 原始消息已提交")
       let rejected = false
       try {
         await link.send(new Uint8Array(link.maxMessageBytes + 1))

@@ -79,7 +79,7 @@ test("built page scans, connects and verifies Ping/max-length through numeric pr
         raw.complete(latest, { link: 42, peerId: "00112233445500", maxMessageBytes: 512 })
       } else {
         raw.complete(latest)
-        if (latest.op === 6) {
+        if (latest.op === 6 && latest.data.byteLength >= 9) {
           const response = new Uint8Array(latest.data.slice(0))
           response[4] = 2
           raw.emit({ kind: 4, link: 42, data: response.buffer })
@@ -103,10 +103,13 @@ test("built page scans, connects and verifies Ping/max-length through numeric pr
   assert.match(state.result, /Ping 回包通过/)
   await state.runTests()
   assert.match(state.result, /均通过/)
-  assert.equal(state.sent, 3)
+  assert.equal(state.sent, 5)
   assert.equal(state.received, 3)
-  assert.equal(raw.requests.filter(request => request.op === 6).length, 3)
-  assert.equal(raw.requests.filter(request => request.op === 6).at(-1).data.byteLength, 512)
+  const sends = raw.requests.filter(request => request.op === 6)
+  assert.equal(sends.length, 5)
+  assert.equal(sends[2].data.byteLength, 512)
+  assert.equal(sends[3].data.byteLength, 0)
+  assert.deepEqual(Array.from(new Uint8Array(sends[4].data)), [0xa5])
   app.onDestroy()
   for (let i = 0; i < 16; i++) await Promise.resolve()
   assert.equal(raw.unsubscriptions, 1)

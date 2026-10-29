@@ -5,7 +5,7 @@ use crate::{backend, core::*, protocol::*, qjs};
 use ::core::{
     cell::UnsafeCell,
     ffi::c_void,
-    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
+    sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering},
 };
 use canopus_abi::{CanopusContext, ContextV1};
 
@@ -284,6 +284,7 @@ static RUNTIME: Shared = Shared(UnsafeCell::new(Runtime::new()));
 static CONTEXT: AtomicPtr<CanopusContext> = AtomicPtr::new(::core::ptr::null_mut());
 static PUMPING: AtomicBool = AtomicBool::new(false);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+static TIMER: AtomicI32 = AtomicI32::new(-1);
 
 fn locked<T>(call: impl FnOnce(&mut Runtime) -> T) -> T {
     #[cfg(all(test, not(target_arch = "arm")))]
@@ -321,7 +322,7 @@ fn error_code(error: Error) -> i32 {
 }
 fn wake_owners() {
     let owners = locked(|runtime| {
-        let mut owners = [0; MAX_SESSIONS + EVENTS];
+        let mut owners = [0; MAX_SESSIONS + EVENTS + REQUESTS];
         for (index, event) in runtime.events.iter().enumerate() {
             if let Some(event) = event {
                 owners[index] = event.owner;
@@ -342,6 +343,13 @@ fn wake_owners() {
                     })
                 {
                     owners[EVENTS + index] = slot.owner;
+                }
+            }
+        }
+        for (index, request) in runtime.pending.iter().enumerate() {
+            if let Some(request) = request {
+                if request.completed.is_some() {
+                    owners[EVENTS + MAX_SESSIONS + index] = request.owner;
                 }
             }
         }
@@ -822,18 +830,25 @@ fn apply_event(
                         slot.close_submitted = false;
                     }
                 }
-                for op in [
-                    qjs::OP_START_ADVERTISING,
-                    qjs::OP_STOP_ADVERTISING,
-                    qjs::OP_START_SCAN,
-                    qjs::OP_STOP_SCAN,
-                ] {
-                    runtime.complete_operation(session.0, op, Err(error));
-                }
+                // Session-level Bluelet work is Register or Close. GAP start/
+                // stop errors have their own callbacks or synchronous result.
+                runtime.complete_operation(session.0, qjs::OP_START_ADVERTISING, Err(error));
                 let _ = runtime.engine.advertising_started(session, Err(error));
             }
         }
         backend::Event::ServiceClosed { session } => {
+            let links: [Option<LinkId>; DEVICE_MAX_LINKS] = ::core::array::from_fn(|index| {
+                runtime
+                    .engine
+                    .links()
+                    .filter(|link| link.session == session)
+                    .nth(index)
+                    .map(|link| link.id)
+            });
+            for link in links.into_iter().flatten() {
+                let _ = runtime.engine.channel_closed(link, Error::Disconnected);
+                runtime.complete_operation(link.0, qjs::OP_DISCONNECT, Ok(()));
+            }
             runtime.complete_operation(session.0, qjs::OP_CLOSE, Ok(()));
             if let Some(slot) = runtime
                 .slots
@@ -1112,6 +1127,7 @@ fn next_event(owner: u32, output: &mut qjs::Event) -> bool {
         if let Some(id) = id {
             if let Ok(Some(message)) = runtime.engine.take_received(id) {
                 output.kind = qjs::EVENT_DATA;
+                output.session = runtime.engine.link(id).unwrap().session.0;
                 output.link = id.0;
                 output.data_len = message.as_bytes().len();
                 output.data[..output.data_len].copy_from_slice(message.as_bytes());
@@ -1178,8 +1194,22 @@ pub unsafe fn install(context: *const CanopusContext) -> Result<(), Error> {
         runtime.last_clock = clock;
     });
     CONTEXT.store(context.cast_mut(), Ordering::Release);
+    TIMER.store(timer, Ordering::Release);
     ACTIVE.store(true, Ordering::Release);
     Ok(())
+}
+
+/// Roll back activation before the native Feature publishes any JS owners.
+pub unsafe fn rollback_before_feature() {
+    ACTIVE.store(false, Ordering::Release);
+    let context = CONTEXT.swap(::core::ptr::null_mut(), Ordering::AcqRel);
+    let timer = TIMER.swap(-1, Ordering::AcqRel);
+    if !context.is_null() && timer >= 0 {
+        let opaque = context.cast::<ContextV1>();
+        let time = &*(*context).time;
+        (time.timer_stop)(opaque, timer);
+        (time.timer_destroy)(opaque, timer);
+    }
 }
 
 #[cfg(test)]
@@ -1386,6 +1416,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_psm_registration_does_not_cancel_independent_scan() {
+        let mut runtime = Runtime::new();
+        let id = session(&mut runtime, 1, "chat");
+        runtime.engine.begin_scan(id, false).unwrap();
+        runtime.engine.begin_advertising(id).unwrap();
+        for (token, operation) in [(1, qjs::OP_START_SCAN), (2, qjs::OP_START_ADVERTISING)] {
+            runtime
+                .reserve(Request {
+                    owner: 1,
+                    operation,
+                    handle: id.0,
+                    session: id,
+                    token,
+                    send: None,
+                    completed: None,
+                })
+                .unwrap();
+        }
+        apply_event(
+            &mut runtime,
+            backend::Event::Failed {
+                session: id,
+                link: None,
+                error: Error::Busy,
+            },
+        );
+        assert_eq!(runtime.pending.iter().flatten().count(), 1);
+        assert_eq!(
+            runtime.pending.iter().flatten().next().unwrap().operation,
+            qjs::OP_START_SCAN
+        );
+        assert_eq!(
+            runtime.engine.session(id).unwrap().scan,
+            ResourceState::Starting
+        );
+        assert_eq!(
+            runtime.engine.session(id).unwrap().advertising,
+            ResourceState::Idle
+        );
+    }
+
+    #[test]
     fn asynchronous_close_failure_keeps_cleanup_retryable() {
         let mut runtime = Runtime::new();
         let id = session(&mut runtime, 1, "chat");
@@ -1506,6 +1578,68 @@ mod tests {
         assert!(
             matches!(runtime.events[0].unwrap().notice, Notice::Complete { session, .. } if session == id.0)
         );
+    }
+
+    #[test]
+    fn service_retirement_clears_core_disconnect_for_already_closed_links() {
+        let mut runtime = Runtime::new();
+        let id = session(&mut runtime, 1, "chat");
+        runtime.engine.begin_advertising(id).unwrap();
+        runtime.engine.advertising_started(id, Ok(())).unwrap();
+        let link = runtime
+            .engine
+            .accept(
+                id,
+                Peer {
+                    address: [1; 6],
+                    address_type: 0,
+                },
+                0,
+            )
+            .unwrap();
+        runtime.engine.close_session(id);
+        runtime.collect_core_events();
+        assert_eq!(runtime.engine.next_disconnect(), Some((link, None)));
+        apply_event(&mut runtime, backend::Event::ServiceClosed { session: id });
+        assert!(runtime.engine.next_disconnect().is_none());
+    }
+
+    #[test]
+    fn data_adapter_event_carries_session_and_complete_binary_sdu() {
+        let mut runtime = Runtime::new();
+        let id = session(&mut runtime, 1, "chat");
+        runtime.engine.begin_scan(id, false).unwrap();
+        runtime.engine.scan_started(id, Ok(())).unwrap();
+        let peer = Peer {
+            address: [1; 6],
+            address_type: 0,
+        };
+        let advertisement = Advertisement {
+            service: ServiceId::new("chat").unwrap(),
+            spsm: 0x80,
+            data: AdvertisingData::EMPTY,
+        };
+        let mut bytes = [0; 31];
+        let len = advertisement.encode(&mut bytes).unwrap();
+        runtime
+            .engine
+            .advertisement(id, peer, -40, &bytes[..len])
+            .unwrap();
+        let (link, _) = runtime.engine.connect(id, peer, 0).unwrap();
+        runtime.engine.channel_opened(link, 0x40, 512).unwrap();
+        runtime.engine.receive(link, b"\x01\x04chat").unwrap();
+        runtime.engine.transmission_submitted(link, None).unwrap();
+        runtime.collect_core_events();
+        runtime.engine.receive(link, &[0, 128, 255]).unwrap();
+        locked(|state| *state = runtime);
+        let mut event = qjs::Event::EMPTY;
+        assert!(next_event(1, &mut event));
+        assert_eq!(event.kind, qjs::EVENT_DATA);
+        assert_eq!(event.session, id.0);
+        assert_eq!(event.link, link.0);
+        assert_eq!(&event.data[..event.data_len], &[0, 128, 255]);
+        assert!(!next_event(1, &mut event));
+        locked(|state| *state = Runtime::new());
     }
 
     #[test]

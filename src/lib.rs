@@ -12,10 +12,18 @@ mod runtime;
 
 #[cfg(feature = "device")]
 mod device {
+    use ::core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
     use canopus_abi::*;
     use canopus_runtime::*;
 
     const MAGIC: u32 = 0x41535431; // "AST1"
+    static INIT_STAGE: AtomicU32 = AtomicU32::new(0);
+    static INIT_ERROR: AtomicI32 = AtomicI32::new(0);
+
+    fn failed(error: i32) -> i32 {
+        INIT_ERROR.store(error, Ordering::Release);
+        error
+    }
 
     /// The context with its service objects (`struct canopus_context_v1`).
     fn context<'a>(ctx: *const ContextV1) -> Option<&'a CanopusContext> {
@@ -33,24 +41,30 @@ mod device {
     }
 
     extern "C" fn activate(ctx: *const ContextV1) -> i32 {
+        INIT_STAGE.store(1, Ordering::Release);
+        INIT_ERROR.store(0, Ordering::Release);
         let Some(c) = context(ctx) else {
-            return -22;
+            return failed(-22);
         };
         if canopus_target_generated::canopus_identity_guard() != 0 {
-            return -95;
+            return failed(-95);
         }
+        INIT_STAGE.store(2, Ordering::Release);
         #[cfg(target_arch = "arm")]
         unsafe {
             if let Err(error) = crate::runtime::install(c) {
-                return match error {
+                return failed(match error {
                     crate::core::Error::Backend(raw) => raw,
                     _ => -95,
-                };
+                });
             }
+            INIT_STAGE.store(3, Ordering::Release);
             if let Err(error) = crate::qjs::install(c, &crate::runtime::ADAPTER) {
-                return error;
+                crate::runtime::rollback_before_feature();
+                return failed(error);
             }
         }
+        INIT_STAGE.store(4, Ordering::Release);
         if unsafe { services_has(ctx, SVC_LOG, 1) } && !c.log.is_null() {
             unsafe { ((*c.log).info)(ctx, c"astrolink native BLE feature active".as_ptr()) };
         }
@@ -65,7 +79,11 @@ mod device {
         let Some(w) = (unsafe { w.as_mut() }) else {
             return -1;
         };
-        if !unsafe { status_put_u32(w, MAGIC) } {
+        if !unsafe {
+            status_put_u32(w, MAGIC)
+                && status_put_u32(w, INIT_STAGE.load(Ordering::Acquire))
+                && status_put_u32(w, INIT_ERROR.load(Ordering::Acquire) as u32)
+        } {
             return -1;
         }
         status_writer_publish(w);
