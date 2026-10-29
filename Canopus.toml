@@ -4,11 +4,14 @@ schema = 1
 id = "astrolink"
 version = "0.1.0"
 version_code = 1
-kind = "portable"
+kind = "target"
 language = "rust"
-lifecycle = "removable"
+lifecycle = "resident-after-activation"
 canopus_abi = "2"
-description = "Astrolink module for Canopus"
+description = "QuickApp peer BLE discovery and bidirectional LE CoC messaging"
 
 [build]
 sources = ["Cargo.toml"]
+
+[targets]
+include = ["xiaomi-band-11-4.100.155"]

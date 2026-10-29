@@ -713,6 +713,11 @@ impl<const LINKS: usize> Engine<LINKS> {
         }
     }
 
+    pub fn has_received(&self, id: LinkId) -> bool {
+        self.link(id)
+            .is_ok_and(|link| link.state == LinkState::Connected && link.rx.len != 0)
+    }
+
     pub fn take_received(&mut self, id: LinkId) -> Result<Option<Message>, Error> {
         let link = self.link_mut(id)?;
         if link.state != LinkState::Connected {

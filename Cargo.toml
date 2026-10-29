@@ -10,15 +10,19 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = []
-# Turned on by `canopus build` for the device build. A target-bound module that
-# calls firmware bindings adds the optional dependency
-# `canopus-target-generated = { path = "../Canopus-Private/sdk/rust/canopus-target-generated", optional = true, default-features = false }`
-# and lists "dep:canopus-target-generated" here; `canopus build` selects its exact target.
-device = []
+# The Canopus CLI selects the exact firmware feature for this dependency.
+device = ["dep:canopus-target-generated"]
 
 [dependencies]
 canopus-abi = { path = "../Canopus-Private/sdk/rust/canopus-abi" }
 canopus-runtime = { path = "../Canopus-Private/sdk/rust/canopus-runtime" }
+canopus-target-generated = { path = "../Canopus-Private/sdk/rust/canopus-target-generated", optional = true, default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
 
 # Keep this module independent from the SDK workspace.
 [workspace]

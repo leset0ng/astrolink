@@ -3,16 +3,19 @@
 //! (sdk/c/canopus_module_entry.h) and calls `canopus_mod_stop` on unload.
 #![cfg_attr(feature = "device", no_std)]
 
+pub mod backend;
 pub mod core;
 pub mod protocol;
+pub mod qjs;
+#[cfg(any(all(feature = "device", target_arch = "arm"), test))]
+mod runtime;
 
 #[cfg(feature = "device")]
 mod device {
     use canopus_abi::*;
     use canopus_runtime::*;
-    use core::ffi::c_char;
 
-    const MAGIC: u32 = 0x4D4F4455; // "MODU"
+    const MAGIC: u32 = 0x41535431; // "AST1"
 
     /// The context with its service objects (`struct canopus_context_v1`).
     fn context<'a>(ctx: *const ContextV1) -> Option<&'a CanopusContext> {
@@ -26,20 +29,36 @@ mod device {
 
     #[no_mangle]
     pub extern "C" fn canopus_mod_stop(_ctx: *const ContextV1) -> i32 {
-        0
+        RESULT_REBOOT_REQUIRED as i32
     }
 
     extern "C" fn activate(ctx: *const ContextV1) -> i32 {
-        if let Some(c) = context(ctx) {
-            if unsafe { services_has(ctx, SVC_LOG, 1) } && !c.log.is_null() {
-                unsafe { ((*c.log).info)(ctx, b"astrolink active\0".as_ptr() as *const c_char) };
+        let Some(c) = context(ctx) else {
+            return -22;
+        };
+        if canopus_target_generated::canopus_identity_guard() != 0 {
+            return -95;
+        }
+        #[cfg(target_arch = "arm")]
+        unsafe {
+            if let Err(error) = crate::runtime::install(c) {
+                return match error {
+                    crate::core::Error::Backend(raw) => raw,
+                    _ => -95,
+                };
             }
+            if let Err(error) = crate::qjs::install(c, &crate::runtime::ADAPTER) {
+                return error;
+            }
+        }
+        if unsafe { services_has(ctx, SVC_LOG, 1) } && !c.log.is_null() {
+            unsafe { ((*c.log).info)(ctx, c"astrolink native BLE feature active".as_ptr()) };
         }
         0
     }
 
     extern "C" fn deactivate(_ctx: *const ContextV1) -> i32 {
-        0
+        RESULT_REBOOT_REQUIRED as i32
     }
 
     extern "C" fn query(w: *mut StatusWriterV1) -> i32 {

@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "canopus-abi",
  "canopus-runtime",
+ "canopus-target-generated",
 ]
 
 [[package]]
@@ -16,6 +17,13 @@ version = "0.1.0"
 
 [[package]]
 name = "canopus-runtime"
+version = "0.1.0"
+dependencies = [
+ "canopus-abi",
+]
+
+[[package]]
+name = "canopus-target-generated"
 version = "0.1.0"
 dependencies = [
  "canopus-abi",
