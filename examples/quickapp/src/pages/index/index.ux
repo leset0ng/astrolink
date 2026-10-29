@@ -1,0 +1,313 @@
+<template>
+  <!-- THESIS: A watch-sized link bench, with real radio state ahead of actions.
+       OWN-WORLD: OLED black, white labels, muted blue controls, green connection state.
+       STORY: Advertise on one watch, scan and connect on the other, then verify an echo.
+       FIRST VIEWPORT: Centered name, connection status, two large scan/advertise controls,
+       and the beginning of the peer list; results and cleanup follow in the same scroll.
+       FORM: Parent-pinned single-page Operate wireframe; no concept lottery applies.
+       FINISH: Build, controller checks, simulator inspection where available, scoped design record. -->
+  <div class="page">
+    <list class="content">
+      <list-item type="heading" class="heading">
+        <text class="title">Astrolink</text>
+        <text class="status {{connected ? 'connected' : ''}}">{{status}}</text>
+        <text if="{{busy}}" class="progress">{{busy}}中…</text>
+      </list-item>
+      <list-item type="controls" class="controls">
+        <input class="action {{scanning ? 'selected' : ''}}" type="button"
+          value="{{scanning ? '停止扫描' : '扫描'}}" disabled="{{!ready || busy !== ''}}" onclick="toggleScan" />
+        <input class="action {{advertising ? 'selected' : ''}}" type="button"
+          value="{{advertising ? '停止广播' : '广播'}}" disabled="{{!ready || busy !== ''}}" onclick="toggleAdvertising" />
+      </list-item>
+      <list-item type="peers-heading" class="section-heading">
+        <text class="section-title">附近设备</text>
+        <text class="section-detail">{{peers.length}} 台</text>
+      </list-item>
+      <list-item if="{{peers.length === 0}}" type="empty" class="empty">
+        <text class="hint">{{scanning ? '正在寻找 chat 服务…' : '另一台开启广播后，点击扫描'}}
+        </text>
+      </list-item>
+      <list-item for="{{peers}}" type="peer" class="peer" onclick="connectPeer($item.peerId)">
+        <div class="peer-copy">
+          <text class="peer-id">{{$item.peerId}}</text>
+          <text class="peer-detail">{{$item.rssi}} dBm · {{$item.dataHex}}</text>
+        </div>
+        <text class="connect-label">连接</text>
+      </list-item>
+      <list-item type="link-heading" class="section-heading">
+        <text class="section-title">消息测试</text>
+        <text class="section-detail">{{connected ? maxMessageBytes + ' B' : '待连接'}}</text>
+      </list-item>
+      <list-item type="metrics" class="metrics">
+        <text class="counter">已发 {{sent}}</text>
+        <text class="counter">已收 {{received}}</text>
+      </list-item>
+      <list-item type="ping" class="full-control">
+        <input class="primary" type="button" value="发送 Ping"
+          disabled="{{!connected || busy !== ''}}" onclick="sendPing" />
+      </list-item>
+      <list-item type="tests" class="full-control">
+        <input class="secondary" type="button" value="二进制与长度测试"
+          disabled="{{!connected || busy !== ''}}" onclick="runTests" />
+      </list-item>
+      <list-item type="result" class="result">
+        <text class="result-copy">{{result}}</text>
+      </list-item>
+      <list-item type="disconnect" class="full-control">
+        <input class="secondary" type="button" value="断开连接"
+          disabled="{{!connected || busy !== ''}}" onclick="disconnect" />
+      </list-item>
+      <list-item type="service-test" class="full-control">
+        <input class="secondary" type="button" value="服务名字节测试"
+          disabled="{{!ready || busy !== ''}}" onclick="testServiceNames" />
+      </list-item>
+      <list-item type="session" class="full-control">
+        <input class="quiet" type="button" value="{{ready ? '关闭 Session' : '重新检测'}}"
+          disabled="{{busy !== ''}}" onclick="toggleSession" />
+      </list-item>
+      <list-item type="log-heading" class="section-heading">
+        <text class="section-title">最近事件</text>
+        <text class="section-detail">{{log.length}} / 20</text>
+      </list-item>
+      <list-item for="{{log}}" type="log" class="log-entry">
+        <text class="log-copy {{$item.failed ? 'failed' : ''}}">{{$item.message}}</text>
+      </list-item>
+      <list-item type="footer" class="footer">
+        <text class="hint">回包由对端应用确认\n退出应用会释放 Session</text>
+      </list-item>
+    </list>
+  </div>
+</template>
+
+<script>
+import { getController, destroyController } from "../../ts/runtime"
+
+let unsubscribe = null
+
+export default {
+  private: {
+    supported: false,
+    ready: false,
+    status: "正在检测模块",
+    busy: "",
+    scanning: false,
+    advertising: false,
+    connected: false,
+    peerId: "",
+    maxMessageBytes: 0,
+    sent: 0,
+    received: 0,
+    result: "两台设备打开本应用",
+    peers: [],
+    log: []
+  },
+  onInit() {
+    if (unsubscribe) unsubscribe()
+    unsubscribe = getController().subscribe(view => {
+      Object.keys(view).forEach(key => { this[key] = view[key] })
+    })
+  },
+  onDestroy() {
+    if (unsubscribe) unsubscribe()
+    unsubscribe = null
+    destroyController()
+  },
+  toggleScan() { return getController().toggleScan() },
+  toggleAdvertising() { return getController().toggleAdvertising() },
+  connectPeer(peerId) { return getController().connect(peerId) },
+  sendPing() { return getController().ping() },
+  runTests() { return getController().testBinaryAndLimits() },
+  disconnect() { return getController().disconnect() },
+  testServiceNames() { return getController().testServiceNames() },
+  toggleSession() {
+    const controller = getController()
+    if (this.ready) return controller.closeSession()
+    controller.reopen()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  background-color: #000000;
+  flex-direction: column;
+}
+.content {
+  width: 100%;
+  height: 100%;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.heading {
+  height: 104px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.title {
+  font-size: 30px;
+  font-weight: 600;
+  color: #ffffff;
+  height: 38px;
+  line-height: 38px;
+}
+.status {
+  font-size: 18px;
+  color: #c1c9d4;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  lines: 1;
+}
+.connected { color: #8fe0b5; }
+.progress {
+  color: #a7c9f6;
+  font-size: 15px;
+  height: 20px;
+}
+.controls {
+  height: 62px;
+  align-items: center;
+  justify-content: space-between;
+}
+.action {
+  width: 47%;
+  height: 52px;
+  border-radius: 14px;
+  background-color: #253c59;
+  color: #ecf3ff;
+  font-size: 20px;
+}
+.selected {
+  background-color: #3b5d85;
+}
+.section-heading {
+  height: 54px;
+  padding-top: 18px;
+  align-items: center;
+  justify-content: space-between;
+}
+.section-title {
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+}
+.section-detail {
+  color: #b5bfcc;
+  font-size: 15px;
+  line-height: 28px;
+}
+.empty {
+  height: 66px;
+  align-items: center;
+}
+.hint {
+  width: 100%;
+  color: #aeb8c6;
+  font-size: 17px;
+  line-height: 24px;
+}
+.peer {
+  height: 78px;
+  align-items: center;
+  border-bottom-width: 1px;
+  border-bottom-color: #26303d;
+}
+.peer-copy {
+  width: 76%;
+  flex-direction: column;
+}
+.peer-id {
+  color: #ffffff;
+  font-size: 18px;
+  lines: 1;
+  text-overflow: ellipsis;
+  height: 28px;
+}
+.peer-detail {
+  color: #b5bfcc;
+  font-size: 15px;
+  lines: 1;
+  text-overflow: ellipsis;
+  height: 24px;
+}
+.connect-label {
+  width: 24%;
+  color: #a7c9f6;
+  font-size: 18px;
+  text-align: right;
+}
+.metrics {
+  height: 40px;
+  align-items: center;
+  justify-content: space-between;
+}
+.counter {
+  color: #c1c9d4;
+  font-size: 18px;
+}
+.full-control {
+  height: 64px;
+  align-items: center;
+}
+.primary, .secondary, .quiet {
+  width: 100%;
+  height: 54px;
+  border-radius: 14px;
+  font-size: 20px;
+}
+.primary {
+  color: #ffffff;
+  background-color: #355f91;
+}
+.secondary {
+  color: #e5ecf5;
+  background-color: #222a35;
+}
+.quiet {
+  color: #bdcadb;
+  background-color: #151a21;
+}
+.result {
+  padding-top: 8px;
+  padding-bottom: 12px;
+}
+.result-copy {
+  width: 100%;
+  color: #cbd9eb;
+  font-size: 17px;
+  line-height: 25px;
+}
+.log-entry {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom-width: 1px;
+  border-bottom-color: #1c232d;
+}
+.log-copy {
+  width: 100%;
+  color: #b8c4d4;
+  font-size: 16px;
+  line-height: 23px;
+}
+.failed { color: #ffb3a6; }
+.footer {
+  padding-top: 18px;
+  padding-bottom: 34px;
+}
+@media (width <= 200) {
+  .content { padding-left: 6px; padding-right: 6px; }
+  .title { font-size: 25px; }
+  .action { font-size: 17px; }
+  .section-title { font-size: 18px; }
+  .section-detail { font-size: 13px; }
+  .hint, .result-copy { font-size: 16px; }
+  .peer-id { font-size: 16px; }
+  .peer-detail { font-size: 13px; }
+  .connect-label { font-size: 16px; }
+  .primary, .secondary, .quiet { font-size: 18px; }
+}
+</style>

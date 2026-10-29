@@ -1,0 +1,27 @@
+{
+  "name": "astrolink-quickapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-device Astrolink BLE example and binary echo tests",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "pnpm typecheck && aiot start --watch",
+    "build": "pnpm typecheck && node scripts/build.cjs source",
+    "release": "pnpm typecheck && aiot release --enable-jsc",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node tests/run.cjs",
+    "build:bytecode": "pnpm typecheck && node scripts/build.cjs bytecode",
+    "test:bundle": "pnpm build && node --test tests/bundle.test.cjs"
+  },
+  "devDependencies": {
+    "@aiot-toolkit/jsc": "1.0.9",
+    "aiot-toolkit": "2.0.5",
+    "typescript": "5.9.3",
+    "ux-types": "1.7.0"
+  },
+  "dependencies": {
+    "@canopus/astrolink": "file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz"
+  }
+}

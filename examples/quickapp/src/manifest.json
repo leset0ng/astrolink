@@ -1,0 +1,15 @@
+{
+  "package": "com.canopus.astrolink.example",
+  "name": "Astrolink",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "minPlatformVersion": 1010,
+  "icon": "/common/icon.png",
+  "deviceTypeList": ["watch"],
+  "features": [{ "name": "canopus.astrolink" }],
+  "config": { "logLevel": "log", "designWidth": "device-width" },
+  "router": {
+    "entry": "pages/index",
+    "pages": { "pages/index": { "component": "index" } }
+  }
+}

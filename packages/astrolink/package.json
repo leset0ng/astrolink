@@ -1,0 +1,40 @@
+{
+  "name": "@canopus/astrolink",
+  "version": "0.1.0",
+  "description": "Event-driven Session/Link API for the Canopus Astrolink BLE native Feature",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.mjs",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/types-cjs/index.d.cts",
+        "default": "./dist/cjs/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist/esm/",
+    "dist/cjs/",
+    "dist/types/",
+    "dist/types-cjs/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "test": "pnpm build && node --test tests/facade.test.cjs",
+    "prepack": "pnpm build",
+    "test:install": "pnpm pack:npm && node tests/install.cjs",
+    "pack:npm": "npm pack --pack-destination dist"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "sideEffects": false
+}

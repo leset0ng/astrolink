@@ -1,0 +1,9 @@
+<script>
+import { destroyController } from "./ts/runtime"
+
+export default {
+  onDestroy() {
+    destroyController()
+  }
+}
+</script>
