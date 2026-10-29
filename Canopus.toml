@@ -1,0 +1,14 @@
+schema = 1
+
+[module]
+id = "astrolink"
+version = "0.1.0"
+version_code = 1
+kind = "portable"
+language = "rust"
+lifecycle = "removable"
+canopus_abi = "2"
+description = "Astrolink module for Canopus"
+
+[build]
+sources = ["Cargo.toml"]
