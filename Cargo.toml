@@ -6,7 +6,7 @@ publish = false
 description = "Astrolink module for Canopus"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "rlib"]
 
 [features]
 default = []
