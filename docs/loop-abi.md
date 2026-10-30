@@ -61,11 +61,24 @@ module misbehaves.
 ## A sibling from another line is a different layout
 
 `p67` (Band 10 Pro) keeps the same `best1503` SoC but is a different board build,
-and its `uv_loop_t` is not the q66 one: the queue head, mutex and async are still
-at 68/76/104, but the loop's pipe descriptors live at `+360/+364` behind a
-`loop+360 == -1` guard (created lazily by `uv_async_init`), and the per-task loop
-state is 288 bytes rather than 712. Its libuv also carries `udp.c` and
-`posix-hrtime.c`, which q66 does not.
+and both the loop and the way it is reached differ:
+
+```
+tcb + 100                        -> task info
+  *(task_info + 16 + 4*key)      -> 808-byte TLS block   (key = *(0x201033AC), limit 7)
+    TLS block + 760              -> the default loop     (embedded at TLS block + 136)
+```
+
+- The loop is not in a `uv_key`-indexed state array; libuv keeps its state in a
+  pthread key, and the loop is an embedded struct inside that state.
+- `uv__get_loop` (`0xC2DE814`) is a real function on that build. A p67 target
+  should call it instead of walking NuttX structures — a code change in
+  `loop_dispatch`, to be made deliberately rather than by bending offsets.
+- The loop's pipe descriptors are at `+360/+364`, created lazily by
+  `uv_async_init` behind a `loop+360 == -1` guard; `+312/+316` is a plain list
+  on that build.
+- The async handle's pending word is 27 (`+108`), not 15 (`+60`).
+- The uv key array allows 8 slots, not 4.
 
 So the offset table above is a **Band 11** result. Re-derive it for any other
 board path rather than assuming the SoC implies the layout, and check the libuv

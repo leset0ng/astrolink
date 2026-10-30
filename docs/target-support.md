@@ -19,7 +19,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | discovery | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below); 7 of 47 bindings recovered |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | discovery | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below); 10 of 47 bindings recovered, layout measured |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
@@ -44,6 +44,10 @@ Measured, not assumed (`../Canopus-Private/targets/xiaomi-band-10-pro-3.101.043/
   but the loop's pipe descriptors live at `+360/+364` behind a `-1` guard, and
   the per-task loop state is 288 bytes instead of 712.
 - libuv carries two more sources and NuttX three more than on q66.
+- The loop is reached through a pthread key into an 808-byte TLS block whose
+  `+760` word holds the default loop, and `uv__get_loop` exists as a callable
+  function there — so adapting it means calling that getter, not re-deriving the
+  q66 offset chain.
 
 So the 40 remaining bindings have to be found on that image with local evidence
 (producer/consumer, `__FILE__` literals, the `[FEATURE]` and `[bluelet]` format
