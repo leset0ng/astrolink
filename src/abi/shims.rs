@@ -171,7 +171,76 @@ macro_rules! abi_firmware_shims {
             data: *const u8,
             length: u16,
         ) -> isize {
-            $crate::abi::shims::queue_send_sdu(owner, channel, cid, data, length)
+            let queue = core::ptr::read_unaligned(
+                (channel + $crate::abi::COC_CHANNEL_QUEUE) as *const usize,
+            );
+            if queue == 0 {
+                return -1;
+            }
+            let payload_offset = 12u16 + $crate::abi::SDU_BUFFER_PAYLOAD as u16;
+            let end = length.wrapping_add(payload_offset);
+            let allocate: unsafe extern "C" fn(u32) -> *mut u8 =
+                core::mem::transmute($crate::abi::F_ALLOC | 1);
+            let buffer = allocate(end as u32 + $crate::abi::SDU_BUFFER_ALLOC_TAIL as u32);
+            if buffer.is_null() {
+                return -1;
+            }
+            core::ptr::write_unaligned(buffer.add($crate::abi::SDU_BUFFER_END).cast::<u16>(), end);
+            core::ptr::write_unaligned(
+                buffer.add($crate::abi::SDU_BUFFER_OFFSET).cast::<u16>(),
+                payload_offset,
+            );
+            if payload_offset > 7 {
+                *buffer.add($crate::abi::SDU_BUFFER_META) = $crate::abi::SDU_BUFFER_META_VALUE;
+            }
+            if length == 0 {
+                // Stock code loops only while the payload length is non-zero, so
+                // a zero-length SDU still needs its one first+last fragment.
+                *buffer.add($crate::abi::SDU_BUFFER_META) = 1;
+                core::ptr::write_unaligned(
+                    buffer
+                        .add($crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize)
+                        .cast::<u32>(),
+                    0,
+                );
+            } else {
+                core::ptr::write_unaligned(
+                    buffer.add($crate::abi::SDU_BUFFER_CID).cast::<u32>(),
+                    cid as u32,
+                );
+                core::ptr::copy_nonoverlapping(
+                    data,
+                    buffer.add($crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize),
+                    length as usize,
+                );
+            }
+            let allocation = allocate($crate::abi::FRAGMENT_NODE_SIZE as u32);
+            if allocation.is_null() {
+                let release: unsafe extern "C" fn(*mut u8) =
+                    core::mem::transmute($crate::abi::F_FREE | 1);
+                release(buffer);
+                return -1;
+            }
+            let node = allocation.add($crate::abi::FRAGMENT_NODE_PAYLOAD);
+            core::ptr::write_unaligned(
+                node.add($crate::abi::FRAGMENT_NODE_BUFFER).cast::<u32>(),
+                buffer as usize as u32,
+            );
+            *node.add($crate::abi::FRAGMENT_NODE_FLAGS) = $crate::abi::FRAGMENT_FLAGS_FIRST_LAST;
+            let result = if length == 0 {
+                let push: unsafe extern "C" fn(usize, *mut u8) -> i32 =
+                    core::mem::transmute($crate::abi::F_L2CAP_QUEUE_PUSH | 1);
+                let flush: unsafe extern "C" fn(usize, usize) -> i32 =
+                    core::mem::transmute($crate::abi::F_L2CAP_CREDIT_FLUSH | 1);
+                push(queue, node);
+                flush(queue, channel)
+            } else {
+                let send: unsafe extern "C" fn(usize, u32, *mut u8) -> i32 =
+                    core::mem::transmute($crate::abi::F_L2CAP_SEND | 1);
+                let _ = owner;
+                send(owner, $crate::abi::COC_QUEUE_EVENT, node)
+            };
+            result as isize
         }
 
         /// Writes one byte to a pinned file, returning the firmware's result.
@@ -191,98 +260,3 @@ macro_rules! abi_firmware_shims {
 /// Keeps `c_void` in scope for the doc comment links without affecting users.
 #[allow(dead_code)]
 fn _shape(_: *mut c_void) {}
-
-/// Hands one outbound payload to the channel's send path, Band 11 shape.
-///
-/// The module builds the outbound object itself there: an SDU buffer with a
-/// 12-byte headroom, a `FIRST_LAST` fragment node wrapping it, and then the
-/// send handler on the channel's queue followed by a credit drain. A target
-/// whose firmware re-fragments internally (p67) answers `queue_send` its own
-/// way instead of calling this.
-///
-/// # Safety
-///
-/// `channel` must be a live Bluelet channel and `data` must point at `length`
-/// readable bytes.
-pub unsafe fn queue_send_sdu(
-    owner: usize,
-    channel: usize,
-    cid: u16,
-    data: *const u8,
-    length: u16,
-) -> isize {
-    let queue =
-        core::ptr::read_unaligned((channel + crate::abi::COC_CHANNEL_QUEUE) as *const usize);
-    if queue == 0 {
-        return -1;
-    }
-    let payload_offset = 12u16 + crate::abi::SDU_BUFFER_PAYLOAD as u16;
-    let end = length.wrapping_add(payload_offset);
-    let buffer = {
-        let allocate: unsafe extern "C" fn(u32) -> *mut u8 =
-            core::mem::transmute(crate::abi::F_ALLOC | 1);
-        allocate(end as u32 + crate::abi::SDU_BUFFER_ALLOC_TAIL as u32)
-    };
-    if buffer.is_null() {
-        return -1;
-    }
-    core::ptr::write_unaligned(buffer.add(crate::abi::SDU_BUFFER_END).cast::<u16>(), end);
-    core::ptr::write_unaligned(
-        buffer.add(crate::abi::SDU_BUFFER_OFFSET).cast::<u16>(),
-        payload_offset,
-    );
-    if payload_offset > 7 {
-        *buffer.add(crate::abi::SDU_BUFFER_META) = crate::abi::SDU_BUFFER_META_VALUE;
-    }
-    if length == 0 {
-        // Stock code loops only while the payload length is non-zero, so a
-        // zero-length SDU still needs its one first+last fragment enqueued.
-        *buffer.add(crate::abi::SDU_BUFFER_META) = 1;
-        core::ptr::write_unaligned(
-            buffer
-                .add(crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize)
-                .cast::<u32>(),
-            0,
-        );
-    } else {
-        core::ptr::write_unaligned(
-            buffer.add(crate::abi::SDU_BUFFER_CID).cast::<u32>(),
-            cid as u32,
-        );
-        core::ptr::copy_nonoverlapping(
-            data,
-            buffer.add(crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize),
-            length as usize,
-        );
-    }
-    let allocation = {
-        let allocate: unsafe extern "C" fn(u32) -> *mut u8 =
-            core::mem::transmute(crate::abi::F_ALLOC | 1);
-        allocate(crate::abi::FRAGMENT_NODE_SIZE as u32)
-    };
-    if allocation.is_null() {
-        let release: unsafe extern "C" fn(*mut u8) = core::mem::transmute(crate::abi::F_FREE | 1);
-        release(buffer);
-        return -1;
-    }
-    let node = allocation.add(crate::abi::FRAGMENT_NODE_PAYLOAD);
-    core::ptr::write_unaligned(
-        node.add(crate::abi::FRAGMENT_NODE_BUFFER).cast::<u32>(),
-        buffer as usize as u32,
-    );
-    *node.add(crate::abi::FRAGMENT_NODE_FLAGS) = crate::abi::FRAGMENT_FLAGS_FIRST_LAST;
-    let result = if length == 0 {
-        let push: unsafe extern "C" fn(usize, *mut u8) -> i32 =
-            core::mem::transmute(crate::abi::F_L2CAP_QUEUE_PUSH | 1);
-        let flush: unsafe extern "C" fn(usize, usize) -> i32 =
-            core::mem::transmute(crate::abi::F_L2CAP_CREDIT_FLUSH | 1);
-        push(queue, node);
-        flush(queue, channel)
-    } else {
-        let send: unsafe extern "C" fn(usize, u32, *mut u8) -> i32 =
-            core::mem::transmute(crate::abi::F_L2CAP_SEND | 1);
-        let _ = owner;
-        send(owner, crate::abi::COC_QUEUE_EVENT, node)
-    };
-    result as isize
-}
