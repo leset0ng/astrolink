@@ -164,3 +164,26 @@ The run's native log records real Extended Advertising Enable, Disable and
 Remove Advertising Set commands. It contains no wake assertion. The advertising
 stop callback ABI remains to be corrected/validated; this run is deliberately
 reported as failed, not as a complete scan/advertising or CoC pass.
+
+## v35: complete native lifecycle probe passes
+
+ELF SHA-256: `cf7cdc308b8e4afa973ed418ebf117bd320ddb506b49e6150351f2bbdddd069c`.
+Package size 98,816 bytes; resident size 50,537 bytes; 1,246 relocations.
+Thirty host tests, target Clippy and the unchanged ELF/package verifier passed.
+
+The stopped advertising callback's second argument is the advertising ID, not
+an error status. The service producer `0x0C4696C0` and client dispatcher
+`0x0C463FA2` establish this ABI. The backend now reports completion only from
+that actual stopped notification and retains IPC errors through `Event::Failed`.
+It does not reinterpret an IPC failure as success.
+
+`/tmp/astrolink-v35-probe/summary.json` confirms version 35, BOOT_RESIDENT,
+activation error 0, terminal `complete`, all 18 checks passed and no failed
+checks/cleanup. It covers Feature/capabilities, valid/invalid UTF-8 service names,
+scan start/stop/repeated stop, advertising start/stop/repeated stop, Session
+close/repeated close and two subsequent Session create/close cycles. The probe
+held the screen awake and restored normal screen behavior on completion.
+
+This establishes the native GAP and Session lifecycle gate on the isolated
+simulator. CoC establishment, HELLO, binary SDUs and peer/controller cleanup
+remain separate integration gates.

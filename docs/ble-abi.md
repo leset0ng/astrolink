@@ -150,11 +150,17 @@ The reported length is checked against 31 before constructing a Rust slice.
 The protocol decoder ignores nonmatching or incomplete AD structures.
 
 The advertising callback descriptor has reserved word 0 followed by
-`started(handle,advertising_id:u8,status:u8)` and `stopped(handle,status:u8)`.
-Stock descriptors at `0x2009BE4C` and `0x200839F4` and dispatcher `0x0C463FA2`
-confirm its 12-byte shape. That dispatcher frees the client advertising handle
-after a failed start or a stopped callback; the backend must not free it.
-Similarly, `0x0C464262` frees the scan handle after failure/stop.
+`started(handle,advertising_id:u8,status:u8)` and
+`stopped(handle,advertising_id:u8)`. Stock descriptors at `0x2009BE4C` and
+`0x200839F4` and dispatcher `0x0C463FA2` confirm its 12-byte shape. For event 280
+that dispatcher passes packet+84 as the second argument. Its producer
+`0x0C4696C0` handles the actual stopped-state notification (`state == 1`), removes
+the advertiser from the service list, and calls the stopped hook with the ID
+from notification+4. This is the same ID passed to started, not an error status.
+The module completes stop only upon this callback; synchronous IPC failures
+still emit the original backend error. The dispatcher frees the client
+advertising handle after a failed start or a stopped callback; the backend must
+not free it. Similarly, `0x0C464262` frees the scan handle after failure/stop.
 
 Advertising parameters are 28 bytes. `0x0C4784E8` creates this layout and
 `0x0C46938C` consumes it:

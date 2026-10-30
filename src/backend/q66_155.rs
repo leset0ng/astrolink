@@ -525,6 +525,7 @@ struct ScanCallbacks {
 struct AdvCallbacks {
     reserved: u32,
     started: extern "C" fn(usize, u8, u8),
+    // Event 280 carries the advertising ID, not an operation status.
     stopped: extern "C" fn(usize, u8),
 }
 fn scan_report(index: usize, handle: usize, report: *const u8) {
@@ -596,12 +597,12 @@ fn adv_started(index: usize, handle: usize, status: u8) {
     });
     retire(index);
 }
-fn adv_stopped(index: usize, status: u8) {
+fn adv_stopped(index: usize) {
     STATE[index].advertising.store(0, Ordering::Release);
     STATE[index].adv_stopping.store(0, Ordering::Release);
     emit(Event::AdvertisingStopped {
         session: session(index),
-        status,
+        status: 0,
     });
     retire(index);
 }
@@ -625,10 +626,10 @@ macro_rules! callbacks {
             let _guard = CallbackGuard::enter($i);
             adv_started($i, h, s);
         }
-        extern "C" fn $adv_stop(h: usize, s: u8) {
+        extern "C" fn $adv_stop(h: usize, _advertising_id: u8) {
             let _guard = CallbackGuard::enter($i);
             if STATE[$i].advertising.load(Ordering::Acquire) == h {
-                adv_stopped($i, s);
+                adv_stopped($i);
             }
         }
         extern "C" fn $coc(e: u32, p: *mut u8) -> i32 {
