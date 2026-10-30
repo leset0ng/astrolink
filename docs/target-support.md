@@ -19,7 +19,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | recovered 41/47, blocked | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below). 41 of 47 firmware bindings have evidenced addresses; the module cannot be built until the four open QuickJS entries and two call-shape changes are settled |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | ABI recovered, integration absent | All four hosts present, but the Feature host is the `ferry`/AIOTJS C++ framework, not the Band 11 Feature framework — see below |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
@@ -53,6 +53,37 @@ So the 40 remaining bindings have to be found on that image with local evidence
 (producer/consumer, `__FILE__` literals, the `[FEATURE]` and `[bluelet]` format
 strings), not transferred. Filling them from cross-line scores would put
 plausible wrong addresses into a pack that is supposed to prevent exactly that.
+
+## Why P67 is not a port and not yet a backend
+
+The address layer is done: 41 recovered addresses plus six compositions, every
+one with producer evidence or device measurement
+(`../Canopus-Private/targets/xiaomi-band-10-pro-3.101.043/evidence/p67-astrolink-coverage.md`).
+What is missing is not addresses, it is the contract:
+
+- **Feature host.** On Band 11 the module constructs a framework object and an
+  Application, calls the Feature registration entry and reaches the manager
+  through a vtable at a fixed global. On P67 the Feature runtime is entered
+  through C++ virtual dispatch on **JS objects whose class id is assigned at run
+  time** (`ensureJsClass` reads a `JSClassID` global), and the object that holds
+  the app list and the framework mutex belongs to the `ferry`/AIOTJS application
+  framework — a different subsystem from the one the Band 11 constants describe.
+  Reusing those offsets would produce plausible wrong values, and there is no
+  measured equivalent yet.
+- **Data path.** P67 has no SDU buffer or 16-byte fragment node. Sending hands a
+  caller-allocated stock buffer (`+0` total length, `+2` payload offset, `+4`
+  cid, `+8` header nibble, `+10` flags, payload at `+4+offset`; the handler frees
+  it) to `bt_l2cap_submit_cid`, which re-fragments in place into 8-byte nodes.
+  Receiving delivers a 12-byte `{handle, buffer, end}` node. Both are shimmable,
+  but the module's send and receive paths have to change shape.
+- **Handle teardown.** `uv_close` has no located entry on this image and the
+  unlock primitive could not be isolated, so the module's async-handle lifetime
+  has no verified implementation.
+
+So P67 is where Band 9/10 are not: the pieces exist and the addresses are
+evidenced. Finishing it means writing a **second integration** — registration
+through `ferry`, its own send/receive shims, and a teardown path — not filling in
+offsets.
 
 ## What stops the P67 module
 
