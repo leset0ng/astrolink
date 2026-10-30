@@ -303,6 +303,8 @@ macro_rules! abi_unsupported {
         pub const F_QJS_GET_ARRAY_BUFFER: usize = 0;
         pub const F_QJS_GET_TYPED_ARRAY_BUFFER: usize = 0;
         pub const F_FEATURE_REGISTER: usize = 0;
+        pub const F_FEATURE_REGISTRY_CREATE: usize = 0;
+        pub const REGISTRATION: crate::abi::Registration = crate::abi::Registration::FrameworkHook;
         pub const D_FRAMEWORK: usize = 0;
         pub const D_FRAMEWORK_VTABLE: usize = 0;
         pub const D_APPLICATION_VTABLE: usize = 0;

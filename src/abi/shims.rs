@@ -27,6 +27,10 @@ use core::ffi::c_void;
 #[macro_export]
 macro_rules! abi_firmware_shims {
     () => {
+        /// Unused on this target: [`REGISTRATION`] is `FrameworkHook`, which
+        /// reaches the registry through the Application it installs.
+        pub const F_FEATURE_REGISTRY_CREATE: usize = usize::MAX;
+
         /// This target publishes its Feature by taking over the framework.
         pub const REGISTRATION: $crate::abi::Registration =
             $crate::abi::Registration::FrameworkHook;

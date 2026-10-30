@@ -213,6 +213,9 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
     if (*STATE.0.get()).hook_id >= 0 {
         return Ok(());
     }
+    if abi::REGISTRATION == abi::Registration::HostRegistry {
+        return install_via_host(adapter);
+    }
     let framework = ptr::read_volatile(abi::D_FRAMEWORK as *const usize);
     if !ram_object(framework) {
         return Err(-16);
@@ -343,6 +346,31 @@ unsafe extern "C" fn initialize_application(
         abi::F_FEATURE_REGISTER,
         unsafe extern "C" fn(usize, *const Description) -> i32
     )(registry, &DESCRIPTION)
+}
+
+/// Publishes the Feature through a host object of our own.
+///
+/// p67 keeps its Feature runtime inside the AIOTJS/ferry host, but the registry
+/// only wants four fields from that host and never dereferences them while
+/// registering, so the module builds a sixteen-byte one instead of taking over
+/// the framework vtables. `host+0`/`+4` are stored and later feed the event
+/// adapter; `+8` must be zero ("do not abort") and `+12` may be null.
+unsafe fn install_via_host(adapter: &'static Adapter) -> Result<(), i32> {
+    let mut host = [0u8; 16];
+    let create: unsafe extern "C" fn(*mut u8) -> usize =
+        mem::transmute(abi::F_FEATURE_REGISTRY_CREATE | 1);
+    let registry = create(host.as_mut_ptr());
+    if registry == 0 {
+        return Err(-16);
+    }
+    let register: unsafe extern "C" fn(usize, *const Description) -> i32 =
+        mem::transmute(abi::F_FEATURE_REGISTER | 1);
+    if register(registry, &DESCRIPTION) < 0 {
+        return Err(-5);
+    }
+    (*STATE.0.get()).adapter = Some(adapter);
+    (*STATE.0.get()).hook_id = 0;
+    Ok(())
 }
 
 unsafe extern "C" fn on_create(context: Context, prototype: usize) {
