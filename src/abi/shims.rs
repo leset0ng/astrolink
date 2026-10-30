@@ -8,17 +8,14 @@
 //!
 //! * **direct** — the firmware exports a function with the contract the module
 //!   wants, so the shim is a single indirect call (`abi_firmware_shims!`);
-//! * **composed** — the firmware has the pieces but no such function, so the
-//!   target builds the behaviour from primitives (see the p67 module: the
-//!   string constructors are inlined there, and its array-buffer accessors take
-//!   a class id the module reads itself).
+//! * **composed** — the firmware has the pieces but no matching public shape,
+//!   so the target builds the behavior from measured primitives (p67 applies
+//!   its state-dependent disconnect policy through the channel primitives).
 //!
 //! The module always calls the shim, never the constant, so a target is free to
 //! answer either way without the call sites knowing. Type aliases are avoided on
 //! purpose: these are the raw ABI types, and `qjs/feature.rs` passes its own
 //! `Context`/`Value` aliases into them.
-
-use core::ffi::c_void;
 
 /// Emits the seven shims in direct firmware-call form.
 ///
@@ -29,14 +26,6 @@ macro_rules! abi_firmware_shims {
     () => {
         /// Firmware async handle storage, in words.
         pub const FEATURE_ASYNC_WORDS: usize = 16;
-
-        /// Unused on this target: [`REGISTRATION`] is `FrameworkHook`, which
-        /// reaches the registry through the Application it installs.
-        pub const F_FEATURE_REGISTRY_CREATE: usize = usize::MAX;
-
-        /// This target publishes its Feature by taking over the framework.
-        pub const REGISTRATION: $crate::abi::Registration =
-            $crate::abi::Registration::FrameworkHook;
 
         #[inline(always)]
         /// QuickJS: create a string value from `length` bytes at `bytes`.
@@ -169,6 +158,16 @@ macro_rules! abi_firmware_shims {
             call(context, value, offset, length, element_size)
         }
 
+        /// Apply the target's disconnect policy on the Bluelet owner task.
+        ///
+        /// # Safety
+        /// `channel` must be live and owned by the current Bluelet task.
+        pub unsafe fn disconnect_channel(channel: usize, policy: u16) {
+            let call: unsafe extern "C" fn(usize, u16) =
+                core::mem::transmute($crate::abi::F_L2CAP_DISCONNECT_CID | 1);
+            call(channel, policy);
+        }
+
         #[inline(always)]
         /// Hands one outbound payload to the channel's send path.
         ///
@@ -189,7 +188,8 @@ macro_rules! abi_firmware_shims {
                 return -1;
             }
             let payload_offset = 12u16 + $crate::abi::SDU_BUFFER_PAYLOAD as u16;
-            let end = length.wrapping_add(payload_offset);
+            // An empty SDU still has its first-fragment two-byte length field.
+            let end = payload_offset.wrapping_add(if length == 0 { 2 } else { length });
             let allocate: unsafe extern "C" fn(u32) -> *mut u8 =
                 core::mem::transmute($crate::abi::F_ALLOC | 1);
             let buffer = allocate(end as u32 + $crate::abi::SDU_BUFFER_ALLOC_TAIL as u32);
@@ -211,7 +211,7 @@ macro_rules! abi_firmware_shims {
                 core::ptr::write_unaligned(
                     buffer
                         .add($crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize)
-                        .cast::<u32>(),
+                        .cast::<u16>(),
                     0,
                 );
             } else {
@@ -224,6 +224,11 @@ macro_rules! abi_firmware_shims {
                     buffer.add($crate::abi::SDU_BUFFER_PAYLOAD + payload_offset as usize),
                     length as usize,
                 );
+                // The stock handler owns the original SDU and creates its own
+                // fragment nodes before releasing that original allocation.
+                let send: unsafe extern "C" fn(usize, u32, *mut u8) -> i32 =
+                    core::mem::transmute($crate::abi::F_L2CAP_SEND | 1);
+                return send(owner, $crate::abi::COC_QUEUE_EVENT, buffer) as isize;
             }
             let allocation = allocate($crate::abi::FRAGMENT_NODE_SIZE as u32);
             if allocation.is_null() {
@@ -238,20 +243,12 @@ macro_rules! abi_firmware_shims {
                 buffer as usize as u32,
             );
             *node.add($crate::abi::FRAGMENT_NODE_FLAGS) = $crate::abi::FRAGMENT_FLAGS_FIRST_LAST;
-            let result = if length == 0 {
-                let push: unsafe extern "C" fn(usize, *mut u8) -> i32 =
-                    core::mem::transmute($crate::abi::F_L2CAP_QUEUE_PUSH | 1);
-                let flush: unsafe extern "C" fn(usize, usize) -> i32 =
-                    core::mem::transmute($crate::abi::F_L2CAP_CREDIT_FLUSH | 1);
-                push(queue, node);
-                flush(queue, channel)
-            } else {
-                let send: unsafe extern "C" fn(usize, u32, *mut u8) -> i32 =
-                    core::mem::transmute($crate::abi::F_L2CAP_SEND | 1);
-                let _ = owner;
-                send(owner, $crate::abi::COC_QUEUE_EVENT, node)
-            };
-            result as isize
+            let push: unsafe extern "C" fn(usize, *mut u8) -> i32 =
+                core::mem::transmute($crate::abi::F_L2CAP_QUEUE_PUSH | 1);
+            let flush: unsafe extern "C" fn(usize, usize) -> i32 =
+                core::mem::transmute($crate::abi::F_L2CAP_CREDIT_FLUSH | 1);
+            push(queue, node);
+            flush(queue, channel) as isize
         }
 
         /// Writes one byte to a pinned file, returning the firmware's result.
@@ -267,7 +264,3 @@ macro_rules! abi_firmware_shims {
         }
     };
 }
-
-/// Keeps `c_void` in scope for the doc comment links without affecting users.
-#[allow(dead_code)]
-fn _shape(_: *mut c_void) {}

@@ -129,20 +129,6 @@ pub use xiaomi_band_9_pro_3_1_190::*;
 #[path = "shims.rs"]
 mod shims;
 
-/// How a target publishes its Feature.
-///
-/// Band 11 needs the module to take over the framework and Application vtables
-/// and become the Application provider. p67 keeps the Feature runtime inside the
-/// `ferry`/AIOTJS host, but its registry only wants four fields from that host,
-/// so the module builds a sixteen-byte one and registers into it directly.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Registration {
-    /// Take over the firmware framework vtables, as Band 11 requires.
-    FrameworkHook,
-    /// Build a minimal host, create the registry, register the descriptor.
-    HostRegistry,
-}
-
 /// Declares a target whose GAP/LE CoC/QuickJS host has not been recovered.
 ///
 /// The module still compiles and loads for that firmware, but
@@ -304,9 +290,6 @@ macro_rules! abi_unsupported {
         pub const F_QJS_GET_ARRAY_BUFFER: usize = 0;
         pub const F_QJS_GET_TYPED_ARRAY_BUFFER: usize = 0;
         pub const F_FEATURE_REGISTER: usize = 0;
-        pub const F_FEATURE_REGISTRY_CREATE: usize = 0;
-        pub const REGISTRATION: $crate::abi::Registration =
-            $crate::abi::Registration::FrameworkHook;
         pub const D_FRAMEWORK: usize = 0;
         pub const D_FRAMEWORK_VTABLE: usize = 0;
         pub const D_APPLICATION_VTABLE: usize = 0;

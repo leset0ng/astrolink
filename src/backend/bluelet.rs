@@ -1190,12 +1190,7 @@ unsafe fn disconnect_cid(_owner: usize, cid: u16) -> Result<(), Error> {
         cid
     );
     if channel != 0 {
-        fw!(
-            abi::F_L2CAP_DISCONNECT_CID,
-            unsafe extern "C" fn(usize, u16),
-            channel,
-            abi::COC_DISCONNECT_POLICY
-        );
+        abi::disconnect_channel(channel, abi::COC_DISCONNECT_POLICY);
     }
     Ok(())
 }
