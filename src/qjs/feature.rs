@@ -1,11 +1,9 @@
-//! Band 11 C++ Feature host integration.
+//! Native Feature lifecycle shared by the measured Band 11 and ferry hosts.
 use super::js::{
     self, clear_exception, define, duplicate, free, integer, Context, Shared, Value, UNDEFINED,
 };
 use super::*;
 use crate::abi;
-use canopus_abi::{CanopusContext, HookType};
-use canopus_runtime::hook::Hook;
 use core::{
     cell::UnsafeCell,
     ffi::{c_char, c_void},
@@ -21,6 +19,14 @@ macro_rules! fw {
         mem::transmute::<usize, $ty>($address | 1)
     };
 }
+#[cfg(not(feature = "target-xiaomi-band-10-pro-3-101-043"))]
+#[path = "framework.rs"]
+mod host;
+#[cfg(feature = "target-xiaomi-band-10-pro-3-101-043")]
+#[path = "ferry.rs"]
+mod host;
+pub use host::install;
+
 #[repr(C)]
 struct Lifecycle {
     registered: Option<unsafe extern "C" fn(*const c_char)>,
@@ -82,7 +88,7 @@ impl Owner {
 // duplicated kernel file is independent of every producer's descriptor table.
 #[repr(C, align(8))]
 struct Notification {
-    async_handle: [u32; 16],
+    async_handle: [u32; abi::FEATURE_ASYNC_WORDS],
     wake: crate::loop_dispatch::PipeWake,
 }
 unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
@@ -104,7 +110,7 @@ unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
     ptr::write(
         endpoint,
         Notification {
-            async_handle: [0; 16],
+            async_handle: [0; abi::FEATURE_ASYNC_WORDS],
             wake: crate::loop_dispatch::PipeWake::EMPTY,
         },
     );
@@ -145,24 +151,18 @@ struct State {
     adapter: Option<&'static Adapter>,
     owners: [Owner; OWNER_COUNT],
     next_owner: u32,
-    original_framework_vtable: usize,
+    original_dispatch: usize,
     hook_id: i32,
 }
 // pthread_mutex_t is initialized by the stock libuv mutex initializer. Storage
 // exceeds its observed fields and is never moved after initialization.
 static READY: AtomicBool = AtomicBool::new(false);
 static MUTEX: Shared<[u32; 8]> = Shared(UnsafeCell::new([0; 8]));
-// Both tables retain the two Itanium ABI prefix words. Only one primary
-// dispatch slot changes in each table; secondary Application vptrs stay stock.
-const FRAMEWORK_VTABLE: usize = abi::D_FRAMEWORK_VTABLE;
-const APPLICATION_VTABLE: usize = abi::D_APPLICATION_VTABLE;
-static FRAMEWORK_DISPATCH: Shared<[usize; 15]> = Shared(UnsafeCell::new([0; 15]));
-static APPLICATION_DISPATCH: Shared<[usize; 52]> = Shared(UnsafeCell::new([0; 52]));
 static STATE: Shared<State> = Shared(UnsafeCell::new(State {
     adapter: None,
     owners: [Owner::EMPTY; OWNER_COUNT],
     next_owner: 1,
-    original_framework_vtable: 0,
+    original_dispatch: 0,
     hook_id: -1,
 }));
 struct Guard;
@@ -181,154 +181,6 @@ impl Drop for Guard {
             fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(MUTEX.0.get().cast());
         }
     }
-}
-
-/// Install the synchronous Application factory/init dispatcher on Q66 .155.
-/// The framework must exist and no QuickApp launch may overlap activation.
-/// The module remains resident after this succeeds.
-///
-/// # Safety
-/// `ctx` must be a valid Supervisor context for this exact target. Call from
-/// serialized module activation while QuickApps are closed. The adapter and
-/// this module's code/data must remain live until reboot. No firmware code is
-/// modified: the Supervisor pointer hook replaces a heap object's RAM vptr.
-pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> Result<(), i32> {
-    if ctx.is_null() {
-        return Err(-22);
-    }
-    if (*STATE.0.get()).hook_id >= 0 {
-        return Ok(());
-    }
-    let framework = ptr::read_volatile(abi::D_FRAMEWORK as *const usize);
-    if !ram_object(framework) {
-        return Err(-16);
-    }
-    let implementation =
-        ptr::read_unaligned((framework + abi::FRAMEWORK_IMPLEMENTATION) as *const usize);
-    if !ram_object(implementation) {
-        return Err(-16);
-    }
-    let current = ptr::read_volatile(framework as *const usize);
-    // A distinct extension can own the same RAM dispatcher. Report BUSY rather
-    // than replace a table whose full layout/ownership has not been audited.
-    if current != FRAMEWORK_VTABLE {
-        return Err(-16);
-    }
-    let rc = fw!(
-        abi::F_UV_MUTEX_INIT,
-        unsafe extern "C" fn(*mut c_void) -> i32
-    )(MUTEX.0.get().cast());
-    if rc != 0 {
-        return Err(rc);
-    }
-    let prefix_bytes = abi::VTABLE_PREFIX_WORDS * ::core::mem::size_of::<usize>();
-    ptr::copy_nonoverlapping(
-        (FRAMEWORK_VTABLE - prefix_bytes) as *const usize,
-        FRAMEWORK_DISPATCH.0.get().cast::<usize>(),
-        abi::FRAMEWORK_COPY_WORDS,
-    );
-    ptr::copy_nonoverlapping(
-        (APPLICATION_VTABLE - prefix_bytes) as *const usize,
-        APPLICATION_DISPATCH.0.get().cast::<usize>(),
-        abi::APPLICATION_COPY_WORDS,
-    );
-    (*FRAMEWORK_DISPATCH.0.get())[abi::VTABLE_PREFIX_WORDS + abi::FRAMEWORK_FACTORY_SLOT] =
-        create_application as *const () as usize;
-    (*APPLICATION_DISPATCH.0.get())[abi::VTABLE_PREFIX_WORDS + abi::APPLICATION_INIT_SLOT] =
-        initialize_application as *const () as usize;
-    (*STATE.0.get()).adapter = Some(adapter);
-    // The real framework's recursive render/list mutex guards its app vector.
-    let framework_mutex = (implementation + abi::FRAMEWORK_MUTEX) as *mut c_void;
-    fw!(abi::F_UV_MUTEX_LOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
-    let first = ptr::read_unaligned((implementation + abi::FRAMEWORK_APPS_BEGIN) as *const usize);
-    let end = ptr::read_unaligned((implementation + abi::FRAMEWORK_APPS_END) as *const usize);
-    if first != end {
-        fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
-        (*STATE.0.get()).adapter = None;
-        return Err(-16);
-    }
-    READY.store(true, Ordering::Release);
-    let result = Hook::install(
-        ctx,
-        framework,
-        FRAMEWORK_DISPATCH.0.get().cast::<usize>().add(2) as usize,
-        &mut (*STATE.0.get()).original_framework_vtable,
-        HookType::Pointer,
-    );
-    fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
-    match result {
-        Ok(id) => {
-            (*STATE.0.get()).hook_id = id;
-            Ok(())
-        }
-        Err(error) => {
-            READY.store(false, Ordering::Release);
-            (*STATE.0.get()).adapter = None;
-            Err(error)
-        }
-    }
-}
-
-fn ram_object(address: usize) -> bool {
-    (0x20000000..0x40000000).contains(&address) && address & 3 == 0
-}
-
-unsafe extern "C" fn create_application(framework: usize, uri: *const c_char) -> usize {
-    trace(10);
-    // The stock factory returns a constructed Application and has not yet
-    // started its JS task. Replace its own primary dispatch pointer now.
-    let original = ptr::read_unaligned(
-        (FRAMEWORK_VTABLE + abi::FRAMEWORK_FACTORY_SLOT * ::core::mem::size_of::<usize>())
-            as *const usize,
-    );
-    let application = fw!(
-        original,
-        unsafe extern "C" fn(usize, *const c_char) -> usize
-    )(framework, uri);
-    if application != 0 && ptr::read_volatile(application as *const usize) == APPLICATION_VTABLE {
-        trace(11);
-        ptr::write_volatile(
-            application as *mut usize,
-            APPLICATION_DISPATCH.0.get().cast::<usize>().add(2) as usize,
-        );
-    }
-    application
-}
-
-unsafe extern "C" fn initialize_application(
-    application: usize,
-    options: usize,
-    loop_pointer: usize,
-) -> i32 {
-    let original = ptr::read_unaligned(
-        (APPLICATION_VTABLE + abi::APPLICATION_INIT_SLOT * ::core::mem::size_of::<usize>())
-            as *const usize,
-    );
-    let result = fw!(original, unsafe extern "C" fn(usize, usize, usize) -> i32)(
-        application,
-        options,
-        loop_pointer,
-    );
-    trace(20);
-    // Runs synchronously on this Application's JS task between its stock
-    // initialize and run calls. Registry mutation cannot race require/eval.
-    let runtime = ptr::read_unaligned((application + abi::APPLICATION_RUNTIME) as *const usize);
-    if runtime == 0 {
-        return result;
-    }
-    let manager = ptr::read_unaligned((runtime + abi::RUNTIME_MANAGER) as *const usize);
-    if manager == 0 {
-        return result;
-    }
-    let registry = ptr::read_unaligned((manager + abi::MANAGER_REGISTRY) as *const usize);
-    if registry == 0 {
-        return result;
-    }
-    trace(21);
-    fw!(
-        abi::F_FEATURE_REGISTER,
-        unsafe extern "C" fn(usize, *const Description) -> i32
-    )(registry, &DESCRIPTION)
 }
 
 unsafe extern "C" fn on_create(context: Context, prototype: usize) {

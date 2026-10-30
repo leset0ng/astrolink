@@ -162,6 +162,7 @@ macro_rules! abi_unsupported {
         pub const F_UV_MUTEX_LOCK: usize = 0;
         pub const F_UV_MUTEX_UNLOCK: usize = 0;
         pub const F_UV_ASYNC_INIT: usize = 0;
+        pub const FEATURE_ASYNC_WORDS: usize = 16;
         pub const F_UV_CLOSE: usize = 0;
         pub const F_FILES_GETFILEP: usize = 0;
         pub const F_FS_GETFILEP: usize = 0;

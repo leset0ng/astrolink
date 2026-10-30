@@ -27,6 +27,9 @@ use core::ffi::c_void;
 #[macro_export]
 macro_rules! abi_firmware_shims {
     () => {
+        /// Firmware async handle storage, in words.
+        pub const FEATURE_ASYNC_WORDS: usize = 16;
+
         /// Unused on this target: [`REGISTRATION`] is `FrameworkHook`, which
         /// reaches the registry through the Application it installs.
         pub const F_FEATURE_REGISTRY_CREATE: usize = usize::MAX;

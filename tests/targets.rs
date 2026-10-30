@@ -4,8 +4,8 @@
 //! recovered, and an adapted module is only kept once it is really built.
 //! Editing one side alone would silently drop a device from the package or
 //! claim support that was never compiled, so this test fails instead. Targets
-//! that were investigated and rejected stay declared with `abi_unsupported!`
-//! so their status is explicit and cannot be confused with a build.
+//! under construction stay explicitly `SUPPORTED = false`; targets without an
+//! ABI use `abi_unsupported!`. Neither enters the package build list.
 
 use std::{fs, path::Path};
 
@@ -36,7 +36,7 @@ struct AbiModule {
 fn read_abi(path: &Path) -> AbiModule {
     let source = fs::read_to_string(path).expect("abi module");
     let adapted = source.contains("pub const SUPPORTED: bool = true;");
-    let marker = if adapted {
+    let marker = if source.contains("pub const TARGET_ID: &str = ") {
         "pub const TARGET_ID: &str = "
     } else {
         "crate::abi_unsupported!("
@@ -95,8 +95,9 @@ fn the_build_list_is_exactly_the_recovered_targets() {
 fn unadapted_targets_declare_themselves() {
     for module in abi_modules().into_iter().filter(|m| !m.adapted) {
         assert!(
-            module.source.contains("abi_unsupported!"),
-            "{}: a target without a recovered ABI must declare abi_unsupported!()",
+            module.source.contains("abi_unsupported!")
+                || module.source.contains("pub const SUPPORTED: bool = false;"),
+            "{}: an unadapted target must explicitly disable firmware support",
             module.id
         );
     }
