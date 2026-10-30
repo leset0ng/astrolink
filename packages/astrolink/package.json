@@ -1,6 +1,6 @@
 {
   "name": "@canopus/astrolink",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Event-driven Session/Link API for the Canopus Astrolink BLE native Feature",
   "license": "UNLICENSED",
   "type": "module",

@@ -27,14 +27,14 @@ acceptance limits.
 
 Installable outputs:
 
-- Native module: `dist/astrolink-0.1.0.canopus`.
-- npm package: `packages/astrolink/dist/canopus-astrolink-0.1.0.tgz`.
+- Native module: `dist/astrolink-0.1.1.canopus`.
+- npm package: `packages/astrolink/dist/canopus-astrolink-0.1.1.tgz`.
 - Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
   `astrolink-example-bytecode.rpk` in that directory.
 - Standalone lifecycle probe: `examples/quickapp/dist/astrolink-probe-source.rpk`.
 
 ```sh
-npm install /absolute/path/to/canopus-astrolink-0.1.0.tgz
+npm install /absolute/path/to/canopus-astrolink-0.1.1.tgz
 ```
 
 ## QuickApp API
