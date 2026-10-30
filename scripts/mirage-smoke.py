@@ -174,18 +174,23 @@ def capture_ramlog(runtime, output, redactor, base, size):
     return {'base': hex(base), 'windowBytes': size, 'timestampLines': len(lines), 'output': str(destination)}
 
 
-def capture_nsh_log(device, output, redactor, miragectl, library, limit):
-    """Capture the firmware log through a working NSH, as on p67."""
+def nsh_command(device, command, miragectl, library):
     result = subprocess.run(
-        [str(miragectl.expanduser().resolve()), 'sh', device, 'dmesg'],
+        [str(miragectl.expanduser().resolve()), 'sh', device, command],
         env=dict(os.environ, MIRAGE_LIBRARY=str(library.expanduser().resolve())),
         capture_output=True, text=True, timeout=20,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout or 'NSH dmesg failed')
+        raise RuntimeError(result.stderr or result.stdout or f'NSH {command} failed')
+    return result.stdout
+
+
+def capture_nsh_log(device, output, redactor, miragectl, library, limit):
+    """Capture the firmware log through a working NSH, as on p67."""
+    text = nsh_command(device, 'dmesg', miragectl, library)
     destination = output / 'guest-logs' / 'nsh-syslog.log'
     destination.parent.mkdir(exist_ok=True)
-    tail = result.stdout.encode('utf-8')[-limit:].decode('utf-8', errors='replace')
+    tail = text.encode('utf-8')[-limit:].decode('utf-8', errors='replace')
     destination.write_text(redactor.text(tail))
     return {'output': str(destination), 'tailLimitBytes': limit}
 
@@ -299,6 +304,11 @@ def main():
             if args.quickapp:
                 summary['quickApps'] = bridge.call('quickApps')
         elif args.command == 'probe':
+            if args.probe_log_source == 'nsh':
+                # Ordinary P67 boot filters INFO, including QuickApp console.log.
+                # Set the RAM-only mask before this run's terminal events occur.
+                nsh_command(record['name'], 'setlogmask i', args.miragectl, args.library)
+                summary['probeLogMask'] = 'INFO'
             summary['module'] = bridge.call('canopusQueryModule', {'module': 'astrolink'})
             if summary['module'].get('state') not in (9, 13):
                 raise RuntimeError(f'Astrolink is not active: {summary["module"]}')

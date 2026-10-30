@@ -19,8 +19,8 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | implemented; native probe in progress | Independent ferry registration, 112-byte async, generic GAP/CoC; initial module activation verified, first QuickApp run reset firmware |
-| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | implemented; device probe pending | Exact-image ferry/GAP/CoC records; builds and passes ELF verification; no inherited device result |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | adapted, emulator probe 18/18 and both CoC roles | v42; real LE/HELLO, 0/1/511/512-byte SDUs, byte-verified replies and cleanup; `docs/p67-runtime-validation.md` |
+| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | adapted, independent emulator probe 18/18 | v42; exact-image L2 backend, CLI install/activation and native lifecycle passed; CoC peer run pending |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
 | `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | unsupported | Same verdict as its `3.1.32` sibling; its own AP is in a `ZZ~` container that does not extract, so the evidence is explicitly sibling-level |
@@ -59,11 +59,19 @@ JS objects as lifecycle arguments, a four-argument queue, or unavailable
 superseded by `docs/p67-shim-contract.md`, `docs/p67-native-contract.md`, and the
 exact target-pack evidence committed in Canopus `ae80a30`.
 
-The .043 module builds and passes ELF verification. Its initial v39 installation
-reached BOOT_RESIDENT with activationError zero in the isolated Mirage device.
-The first native QuickApp launch reset firmware, so lifecycle and radio checks
-are **not yet passed**. First-fault debugging and final-build verification are
-in progress; a successful module activation alone does not close that gate.
+The .043 v42 module builds and passes ELF verification. After correcting the
+TCB TLS offset from 104 to 100 and using a current Supervisor with Time v2, the
+real companion reported BOOT_RESIDENT with activationError zero. Its fresh
+QuickApp native lifecycle probe passed 18/18 with an actual terminal completion
+event. Enable INFO logging with `setlogmask i` before collecting P67 probe logs;
+the ordinary firmware mask suppresses `console.log`. Earlier no-event summaries
+cannot establish the native runner's progress. See
+`docs/p67-runtime-validation.md` for evidence and exact scope. Both incoming and
+outgoing `.043` CoC runs pass LE establishment, HELLO, complete SDU boundaries,
+byte-verified replies and cleanup. A fresh post-traffic lifecycle probe also
+passes 18/18. `.036` independently passes 18/18 after an entirely command-line
+install and activation using its exact-image L2-enabled Supervisor. It still
+needs its own CoC peer run. Physical-radio acceptance remains a separate gate.
 
 ## What "recovered" requires
 
@@ -92,7 +100,7 @@ meant to prevent; the correct result is `abi_unsupported!()` plus a note here.
 
 ## Validation status
 
-Four targets currently build and pass `canopus verify`. Exact sizes and
+Five targets currently build and pass `canopus verify`. Exact sizes and
 relocation counts vary by host implementation and are recorded with the
 corresponding validation build; build success establishes no runtime result. The 18-check native lifecycle probe passes on the Q66
 `.155` device (`docs/native-validation.md`) and on the Q66 `.179` device.

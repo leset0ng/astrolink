@@ -3,7 +3,11 @@
 Astrolink is a resident Canopus module that exposes peer BLE discovery and
 bidirectional LE L2CAP Credit Based Connections to QuickApps. Every firmware it
 supports is described by one exact-target ABI module under `src/abi/`; today
-**Xiaomi Smart Band 11, firmware 4.100.155** is the recovered and validated one.
+**Xiaomi Smart Band 11, firmware 4.100.155** is the reference for recovered
+and validated CoC integration. P67 **3.101.043** passes both CoC connection
+directions and the 18-check native lifecycle probe in Mirage. P67 **3.101.036**
+independently passes the 18-check native lifecycle probe through command-line
+installation and activation. See `docs/p67-runtime-validation.md`.
 Other firmware versions need their own GAP, CoC, task and QuickJS recovery
 recorded in `../Canopus-Private/targets/<target>/symbols`; those that have not
 been recovered are listed with `abi_unsupported!()` and never call firmware.
@@ -27,7 +31,7 @@ acceptance limits.
 
 Installable outputs:
 
-- Native module: `dist/astrolink-0.1.1.canopus`.
+- Native module: `dist/astrolink-0.1.0.canopus` (version code 42).
 - npm package: `packages/astrolink/dist/canopus-astrolink-0.1.1.tgz`.
 - Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
   `astrolink-example-bytecode.rpk` in that directory.

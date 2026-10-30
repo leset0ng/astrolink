@@ -23,6 +23,20 @@ one-byte SDUs. `native-validation.md` contains exact artifacts and regressions.
 These are simulated host/controller integration results; RF, phone/Audio
 coexistence and hardware stability remain separate physical-device work.
 
+## P67 integration
+
+P67 `.043` module v42 also passes both roles using the same external peer
+implementation. The accepted results are
+`/tmp/astrolink-p67-v42-peer-central.json` (firmware incoming) and
+`/tmp/astrolink-p67-v42-peer-outgoing.json` (firmware outgoing). Both verify real
+LE establishment, matching HELLO, 0/1/32/511/512-byte firmware SDUs, byte-verified
+511/512-byte replies, fully drained queues and successful cleanup. Actual
+QuickApp logs independently confirm consumption of empty and one-byte SDUs.
+The same Session is reused across disconnect/reconnect with new CIDs; a fresh
+18/18 lifecycle probe passes after traffic. See `p67-runtime-validation.md` and
+`evidence/p67-043-v42-coc.json`. P67 `.036` has its own 18/18 lifecycle result,
+but no CoC peer acceptance is inherited from `.043`.
+
 ## Endpoint ownership and setup
 
 Only one external host can own the controller endpoint. Finish the companion

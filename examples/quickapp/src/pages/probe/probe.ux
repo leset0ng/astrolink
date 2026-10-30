@@ -54,20 +54,14 @@ export default {
       this.log = view.log
       if (view.finished) brightness.setKeepScreenOn({ keepScreenOn: false })
     })
-    const runner = activeRunner
-    new Promise((resolve, reject) => {
-      brightness.setKeepScreenOn({
-        keepScreenOn: true,
-        success: resolve,
-        fail: (data, code) => reject(new Error(`无法保持测试亮屏 (${code}): ${String(data)}`))
-      })
-    }).then(() => {
-      if (activeRunner !== runner) {
-        brightness.setKeepScreenOn({ keepScreenOn: false })
-        return
-      }
-      return runner.start()
-    }).catch(error => {
+    try {
+      brightness.setKeepScreenOn({ keepScreenOn: true })
+    } catch (error) {
+      console.warn('[AstrolinkProbe] ' + JSON.stringify({ event: 'keep-screen-on-error', error: String(error) }))
+    }
+    // Some firmware versions apply this setting without invoking a callback.
+    // Screen policy must not prevent the native probe from starting.
+    activeRunner.start().catch(error => {
       this.status = "探针执行失败"
       this.detail = String(error)
       this.failed = true

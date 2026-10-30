@@ -68,7 +68,8 @@ pub const LOOP_WRITE_FD: usize = 364;
 pub const ASYNC_BUSY_WORD: usize = 6;
 pub const ASYNC_PENDING_WORD: usize = 27;
 /// NuttX task descriptor: TLS pointer, task group, and the group's file list.
-pub const TCB_TLS: usize = 104;
+/// `sys_get_tls` copies TCB +100 into the TLS result; see the native contract.
+pub const TCB_TLS: usize = 100;
 pub const TCB_GROUP: usize = 8;
 pub const GROUP_FILELIST: usize = 720;
 pub const FILELIST_ROW: usize = 8;

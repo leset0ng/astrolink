@@ -107,8 +107,10 @@ busy +24 and pending +108. `uv_async_init 0xC2E14E8` and send `0xC2E15A4`
 prove these offsets. Loop initialization `0xC2DC9A0` sets queue head +68,
 mutex +76, async +104. The loop pipe descriptors are read +360/write +364.
 
-The task lookup follows TCB TLS +104, taskinfo UV slots +16 with stride4,
-key `0x201033AC` (maximum7), and UV-state default loop +760. TCB group is +8;
+The task lookup follows TCB TLS +100, then the taskinfo pointer in the TLS
+header's first word, taskinfo UV slots +16 with stride4, key `0x201033AC`
+(maximum7), and UV-state default loop +760. TCB +104 is not the TLS pointer.
+TCB group is +8;
 group filelist is +720 (`0xC2055E8`). Files are 32 bytes with inode +16;
 filelist rows hold eight entries. This supplies the same independently pinned
 file wake used by the common bridge, without borrowing another task's numeric FD.
@@ -120,6 +122,34 @@ The earlier draft passed an iovec where that uio was expected and was invalid.
 The actual libuv mutex wrappers are init `0xC2DCCCC`, lock `0xC2DCDA8`, unlock
 `0xC2DCDC4`; close is `0xC2DB874`. Native Feature layout evidence lives in the
 target pack's `EVID-PORT-1043-FERRY-001`.
+
+### Corrected TCB/TLS lookup in v42
+
+Both exact AP images independently establish `TCB_TLS = 100`. The old value
+104 confused the caller's stack frame with the helper's output structure:
+`sys_get_tls` receives `out = frame +4`, so loading `frame +8` reads `out +4`,
+which the helper populated from TCB +100. It does not read `out +8`.
+
+| Step | `.043` instruction VA | `.036` instruction VA |
+| --- | --- | --- |
+| Copy TCB +100 into out +4 | `0x0C205FC2` | `0x0C1F0522` |
+| Caller loads frame +8 (out +4) | `0x0C1F5458` | `0x0C1E5940` |
+| Dereference TLS first word for taskinfo | `0x0C1F5440` | `0x0C1E5928` |
+| Load taskinfo slot at 16 +4 × key | `0x0C1F5472` | `0x0C1E595A` |
+| Load loop pointer at uvstate +760 | `0x0C2DE81C` | `0x0C2C866C` |
+
+The `.036` AP SHA-256 is
+`662d67f5e247e31e194d3161024890ba93b9d29d70b290fadb9aac8ce8ec3c81`.
+The `.043` AP hash is recorded at the start of this document.
+
+On the isolated `.043` device, the exact chain was independently observed:
+TCB `0x3C4F7010` +100 → TLS `0x3C416AE8` → taskinfo `0x3C355A98` →
+key 1 slot `0x3C355E68` → loop `0x3C355EF0`, matching the stock GAP client's
+business loop exactly. The old TCB +104 path instead read a block beginning
+with `0xDEADBEEF` and could never find that owner. These addresses describe one
+runtime capture, not fixed addresses used by the module. The shared lookup,
+file pinning and notification code remain unchanged.
+
 
 ## QuickJS: direct APIs were mistaken for missing compositions
 

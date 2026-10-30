@@ -1,0 +1,244 @@
+{
+  "level": "host/emulator",
+  "target": "xiaomi-band-10-pro-3.101.043",
+  "moduleElfSha256": "fb36c8a5c8e875e840c48a5d5ed547f12cc25d7075663bcb8e401a320f303c71",
+  "exampleRpkSha256": "c1a143c1db0c25c887946663b566a19b1144290bbba44d1ab0c9f43a622abd02",
+  "qemu": {
+    "commit": "42b97e2cd6",
+    "path": "/tmp/astrolink-qemu-le/build/qemu-system-arm",
+    "sha256": "99b67e01d4a4c19d2352461da54a43b16d194fea9cd19a893df3cc756195390b"
+  },
+  "activation": "CLI encrypted CPC2 ACTIVATE; v42 BOOT_RESIDENT activationError 0",
+  "roles": {
+    "incoming": {
+      "summary": {
+        "kind": "external-standard-le-peer",
+        "ok": true,
+        "physical_radio_verified": false,
+        "role": "central",
+        "service": "chat",
+        "spsm": 128,
+        "endpoint": "127.0.0.1:53918",
+        "script_sha256": "90a3ea61641bc4e9edefe9ff7c8da492218fcd0884e59f9d3b3ed314b5548b6d",
+        "le_connection_observed": true,
+        "hello_verified": true,
+        "host_queued_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "firmware_to_peer_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "byte_verified_example_response_sizes": [
+          511,
+          512
+        ],
+        "firmware_example_requests_echoed": 2,
+        "missing_firmware_sdu_sizes": [],
+        "outgoing_kframes_pending": 0,
+        "outgoing_acl_pending": 0,
+        "controller_acl_outstanding": 0,
+        "zero_one_receive_evidence": "HCI reception proves firmware-to-peer delivery; peer-to-firmware 0/1-byte app consumption requires QuickApp counters/logs",
+        "cleanup_errors": []
+      },
+      "events": [
+        {
+          "seconds": 33.739816,
+          "kind": "le_connected",
+          "handle": 2,
+          "role": 0,
+          "address_type": 0,
+          "peer": "C2:83:A0:35:67:13",
+          "enhanced": true
+        },
+        {
+          "seconds": 33.745668,
+          "kind": "coc_open",
+          "local_cid": 64,
+          "remote_cid": 71,
+          "local_receive_mtu": 512,
+          "local_receive_mps": 128,
+          "remote_receive_mtu": 512,
+          "remote_receive_mps": 64,
+          "initial_tx_credits": 5
+        },
+        {
+          "seconds": 33.776399,
+          "kind": "astrolink_ready",
+          "service": "chat"
+        },
+        {
+          "seconds": 33.816707,
+          "kind": "example_response_verified",
+          "sequence": 10555393,
+          "length": 511
+        },
+        {
+          "seconds": 33.81811,
+          "kind": "example_response_verified",
+          "sequence": 10555394,
+          "length": 512
+        },
+        {
+          "seconds": 57.979711,
+          "kind": "coc_disconnected",
+          "initiator": "test-host"
+        },
+        {
+          "seconds": 57.979848,
+          "kind": "le_disconnected",
+          "reason": 22
+        },
+        {
+          "seconds": 57.979872,
+          "kind": "cleanup",
+          "errors": []
+        }
+      ],
+      "evidencePath": "/tmp/astrolink-p67-v42-peer-central.json"
+    },
+    "outgoing": {
+      "summary": {
+        "kind": "external-standard-le-peer",
+        "ok": true,
+        "physical_radio_verified": false,
+        "role": "peripheral",
+        "service": "chat",
+        "spsm": 128,
+        "endpoint": "127.0.0.1:53918",
+        "script_sha256": "90a3ea61641bc4e9edefe9ff7c8da492218fcd0884e59f9d3b3ed314b5548b6d",
+        "le_connection_observed": true,
+        "hello_verified": true,
+        "host_queued_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "firmware_to_peer_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "byte_verified_example_response_sizes": [
+          511,
+          512
+        ],
+        "firmware_example_requests_echoed": 2,
+        "missing_firmware_sdu_sizes": [],
+        "outgoing_kframes_pending": 0,
+        "outgoing_acl_pending": 0,
+        "controller_acl_outstanding": 0,
+        "zero_one_receive_evidence": "HCI reception proves firmware-to-peer delivery; peer-to-firmware 0/1-byte app consumption requires QuickApp counters/logs",
+        "cleanup_errors": []
+      },
+      "events": [
+        {
+          "seconds": 12.213769,
+          "kind": "le_connected",
+          "handle": 2,
+          "role": 1,
+          "address_type": 0,
+          "peer": "C2:83:A0:35:67:13",
+          "enhanced": true
+        },
+        {
+          "seconds": 12.218544,
+          "kind": "coc_open",
+          "local_cid": 64,
+          "remote_cid": 73,
+          "local_receive_mtu": 512,
+          "local_receive_mps": 128,
+          "remote_receive_mtu": 512,
+          "remote_receive_mps": 64,
+          "initial_tx_credits": 5
+        },
+        {
+          "seconds": 12.251467,
+          "kind": "astrolink_ready",
+          "service": "chat"
+        },
+        {
+          "seconds": 12.294849,
+          "kind": "example_response_verified",
+          "sequence": 10555393,
+          "length": 511
+        },
+        {
+          "seconds": 12.296097,
+          "kind": "example_response_verified",
+          "sequence": 10555394,
+          "length": 512
+        },
+        {
+          "seconds": 37.293437,
+          "kind": "coc_disconnected",
+          "initiator": "test-host"
+        },
+        {
+          "seconds": 37.29355,
+          "kind": "le_disconnected",
+          "reason": 22
+        },
+        {
+          "seconds": 37.293651,
+          "kind": "cleanup",
+          "errors": []
+        }
+      ],
+      "evidencePath": "/tmp/astrolink-p67-v42-peer-outgoing.json"
+    }
+  },
+  "postTraffic": {
+    "module": {
+      "slot": 0,
+      "moduleId": "astrolink",
+      "version": 42,
+      "state": 13,
+      "lifecycleClass": 1,
+      "flags": 1,
+      "activationError": 0
+    },
+    "probe": {
+      "passed": true,
+      "checksPassed": 18,
+      "failures": [],
+      "completed": {
+        "sequence": 37,
+        "event": "complete",
+        "step": "18 项检查已完成",
+        "passed": 18
+      }
+    },
+    "evidenceDirectory": "/tmp/astrolink-p67-v42-post-coc-probe"
+  },
+  "quickAppEvidence": {
+    "incoming": "/tmp/astrolink-p67-v42-incoming-live/guest-logs/nsh-syslog.log",
+    "outgoing": "/tmp/astrolink-p67-v42-outgoing-live/guest-logs/nsh-syslog.log",
+    "observed": [
+      "收到 0 B 自定义消息",
+      "收到 1 B 自定义消息",
+      "已回包 511 B",
+      "已回包 512 B",
+      "二进制逐字节校验通过",
+      "512 B 最大消息回包通过",
+      "0 B / 1 B 原始消息已提交",
+      "二进制、最大长度、超长拒绝均通过"
+    ]
+  },
+  "limits": [
+    "Simulated controller transport, no physical radio",
+    "No physical phone/Audio coexistence or long-duration stability acceptance",
+    "No .036 CoC acceptance inherited from this result"
+  ]
+}

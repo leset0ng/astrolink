@@ -1,0 +1,55 @@
+{
+  "level": "host/emulator",
+  "target": "xiaomi-band-10-pro-3.101.043",
+  "firmware": "miwear.watch.p67tc_v3.101.043_full_a4ce8564",
+  "firmwareSha256": "519307675665e4866d722a8119a98589c397b614ac3294cb87bfc86de45756ec",
+  "moduleElfSha256": "fb36c8a5c8e875e840c48a5d5ed547f12cc25d7075663bcb8e401a320f303c71",
+  "supervisorElfSha256": "5dc88c9e7f38ec622cdf5f94b13e537fdc176c6926b080880f4fdfdb0e4ff3c0",
+  "probeRpkSha256": "872ebcf43bcfb764409c9878e954ad168757633ab0e2853066a673507a0f3ad5",
+  "module": {
+    "version": 42,
+    "state": 13,
+    "activationError": 0
+  },
+  "probe": {
+    "passed": true,
+    "checksPassed": 18,
+    "failures": [],
+    "completed": {
+      "sequence": 37,
+      "event": "complete",
+      "step": "18 项检查已完成",
+      "passed": 18
+    }
+  },
+  "checks": [
+    "加载原生 Feature",
+    "读取设备能力",
+    "接受 6 字节服务名",
+    "关闭边界测试 Session",
+    "拒绝 7 字节服务名",
+    "创建 chat Session",
+    "开始扫描",
+    "停止扫描",
+    "重复停止扫描",
+    "开始广播 1 字节",
+    "停止广播",
+    "重复停止广播",
+    "关闭 chat Session",
+    "重复关闭 Session",
+    "重建 Session 1/2",
+    "释放 Session 1/2",
+    "重建 Session 2/2",
+    "释放 Session 2/2"
+  ],
+  "faultObservation": {
+    "seconds": 90,
+    "result": "NO_FAULT_IN_90_SECONDS"
+  },
+  "evidenceDirectory": "/tmp/astrolink-p67-v42-native-probe",
+  "limits": [
+    "P67 .036 has no native device run",
+    "No bidirectional CoC peer acceptance in this run",
+    "No physical-radio acceptance"
+  ]
+}
