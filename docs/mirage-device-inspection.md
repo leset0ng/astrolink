@@ -39,8 +39,9 @@ send({'execute': 'human-monitor-command', 'arguments': {'command-line': 'xp /204
 
 | Range | Contents |
 | --- | --- |
-| `0x20000000 .. 0x20160000` | internal SRAM (1.375 MB) — everything the firmware allocates |
-| `0x1c000000`, `0x30000000` | further readable windows (PSRAM/flash windows) |
+| `0x20000000 .. 0x20160000` | internal SRAM (1.375 MB) — firmware C allocations: task control blocks, uv state, L2CAP channels |
+| `0x3c000000 ..` | PSRAM — **the JavaScript heap lives here** (ArrayBuffer payloads, JS objects) |
+| `0x1c000000`, `0x30000000` | further readable windows |
 | `0x0c0c0000 +` | AP flash, XIP |
 | `xip + 0x20000000` | the same flash through the cached alias (`0x2c0c0000 +`) |
 
@@ -86,6 +87,11 @@ and diffing; that check is what exposed the mangling.
 Static analysis cannot recover values the firmware computes at run time — a
 QuickJS class table, for instance, is built by registration calls, so its ids
 have no static address. The device can answer those directly: create an object
-with a recognisable payload, snapshot RAM once, find the payload, and read the
-object header around the pointer to it. Use one snapshot per question, because
+with a recognisable payload, snapshot memory once, find the payload, and read the
+object header around the pointer to it. Snapshot **PSRAM (`0x3c000000`) for
+anything JavaScript-owned** and SRAM for firmware structures — scanning SRAM for a
+JS allocation finds nothing at all, which looks exactly like a failed experiment.
+
+A second useful trick on this `qjs`: it has no `print`, but `console.log` works
+and `throw <expr>` puts the value into the interpreter's error text. Use one snapshot per question, because
 the heap moves between reads.
