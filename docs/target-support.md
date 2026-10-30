@@ -84,6 +84,10 @@ Device findings worth keeping, so they are not rediscovered:
 
 ## Adding a target
 
+The fast path is written down in `docs/porting-playbook.md`: a sibling firmware
+is a matching job against the existing pack, not a rediscovery of the module's
+needs.
+
 1. Record the symbol and data records in
    `../Canopus-Private/targets/<target>/symbols` with their evidence ids.
 2. Regenerate the pack so `canopus_target_generated` exposes the constants.
