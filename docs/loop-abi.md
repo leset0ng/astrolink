@@ -82,6 +82,13 @@ tcb + 100                        -> task info
   on that build.
 - The async handle's pending word is 27 (`+108`), not 15 (`+60`).
 - The uv key array allows 8 slots, not 4.
+- The task iterator exists but iterates differently: p67's `0xC205E54`
+  (`worker(tcb, arg)`, entered inside the scheduler critical section) walks a
+  **pid hash** — bucket array `0x200B24B0`, bucket count `0x200B24AC` — and calls
+  the worker once per non-empty bucket. Its own firmware uses it for the global
+  file release, with the group-filelist walker as the worker, so it is the right
+  entry; but a chained bucket would not be followed. The module must not assume
+  the walk covers every TCB in a bucket.
 
 So the offset table above is a **Band 11** result. Re-derive it for any other
 board path rather than assuming the SoC implies the layout, and check the libuv
