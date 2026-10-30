@@ -3,6 +3,7 @@
 //! (sdk/c/canopus_module_entry.h) and calls `canopus_mod_stop` on unload.
 #![cfg_attr(feature = "device", no_std)]
 
+pub mod abi;
 pub mod backend;
 pub mod core;
 #[cfg(feature = "device")]

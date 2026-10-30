@@ -1,9 +1,13 @@
 # Astrolink
 
 Astrolink is a resident Canopus module that exposes peer BLE discovery and
-bidirectional LE L2CAP Credit Based Connections to QuickApps. The first device
-backend targets **Xiaomi Smart Band 11, firmware 4.100.155** exactly. Other
-firmware versions require separate ABI recovery and target records.
+bidirectional LE L2CAP Credit Based Connections to QuickApps. Every firmware it
+supports is described by one exact-target ABI module under `src/abi/`; today
+**Xiaomi Smart Band 11, firmware 4.100.155** is the recovered and validated one.
+Other firmware versions need their own GAP, CoC, task and QuickJS recovery
+recorded in `../Canopus-Private/targets/<target>/symbols`; those that have not
+been recovered are listed with `abi_unsupported!()` and never call firmware.
+`docs/target-support.md` holds the matrix and the requirement list.
 
 The module uses the existing firmware Bluetooth host. It registers independent
 scan/advertisement handles and dynamic LE SPSMs. It does not replace the HCI
@@ -132,8 +136,10 @@ cargo fmt --check
 - `src/core.rs`: allocation-free Session/Link state, bounded queues, connection
   handshake, timeout, resource state and generation-safe routing.
 - `src/protocol.rs`: standard legacy advertisement and HELLO formats.
-- `src/backend/`: exact-target GAP and Bluelet CoC ABI, owner-task submission and
-  explicit firmware-buffer ownership.
+- `src/abi/`: one module per firmware, holding the recovered callable and data
+  addresses (from the target pack) plus every structure offset the backend uses.
+- `src/backend/`: target-independent GAP and Bluelet CoC logic, owner-task
+  submission and explicit firmware-buffer ownership.
 - `src/qjs/`: per-application Feature registration, native binary argument
   handling, QJS task dispatch and context destruction.
 - `src/runtime.rs`: asynchronous operation completion and cross-task integration.

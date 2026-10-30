@@ -1,6 +1,9 @@
 # Q66 `.155` BLE backend ABI
 
-This record describes the backend in `src/backend/q66_155.rs`. The source of
+This record describes the Q66 `.155` values of `src/abi/xiaomi_band_11_4_100_155.rs`
+and the target-independent logic in `src/backend/bluelet.rs`. Callable addresses
+are taken from the target pack and must stay in sync with
+`targets/xiaomi-band-11-4.100.155/symbols`. The source of
 truth is the unpacked Q66 AP, build `user-4.100.155-cn-202609041500`, SHA-256
 `ea0bdf1920cb30223d616432af00565ca67622e6468328f5eab155f8cdc2fb9f`.
 The database used was

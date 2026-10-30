@@ -92,6 +92,6 @@ pub(crate) unsafe fn trace(_: u32) {}
 pub(crate) fn notify(_: u32) {}
 
 #[cfg(feature = "device")]
-mod target;
+mod feature;
 #[cfg(feature = "device")]
-pub(crate) use target::{install, notify, trace};
+pub(crate) use feature::{install, notify, trace};

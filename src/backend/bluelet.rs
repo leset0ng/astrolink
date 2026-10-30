@@ -1,5 +1,8 @@
-//! Q66 4.100.155 only. Every address/offset is audited in docs/ble-abi.md.
+//! Bluelet GAP and legacy LE CoC transport, shared by every adapted target.
+//! Firmware addresses and structure offsets come from `crate::abi`; the logic
+//! below is target independent. `docs/ble-abi.md` records the recovery.
 use super::*;
+use crate::abi;
 use ::core::{
     cell::UnsafeCell,
     ptr,
@@ -12,9 +15,6 @@ const RECEIVE_MTU: u16 = 512;
 const RECEIVE_MPS: u16 = 64;
 const INITIAL_CREDITS: u16 = 5;
 const STARTING: usize = 1;
-const OWNER: usize = 0x200be890;
-// Process-lifetime GAP client created by firmware boot at C7F6C60.
-const ADAPTER: usize = 0x200da4f8;
 static SINK: AtomicUsize = AtomicUsize::new(0);
 static CLIENT: AtomicUsize = AtomicUsize::new(0);
 static CLIENT_STARTING: AtomicUsize = AtomicUsize::new(0);
@@ -102,14 +102,18 @@ macro_rules! fw {
     }};
 }
 unsafe fn alloc(size: usize) -> *mut u8 {
-    let p = fw!(0xc351724, unsafe extern "C" fn(u32) -> *mut u8, size as u32);
+    let p = fw!(
+        abi::F_ALLOC,
+        unsafe extern "C" fn(u32) -> *mut u8,
+        size as u32
+    );
     if !p.is_null() {
         ptr::write_bytes(p, 0, size);
     }
     p
 }
 unsafe fn free(p: *mut u8) {
-    fw!(0xc34cd2c, unsafe extern "C" fn(*mut u8), p);
+    fw!(abi::F_FREE, unsafe extern "C" fn(*mut u8), p);
 }
 unsafe fn word(p: *const u8, offset: usize) -> u16 {
     ptr::read_unaligned(p.add(offset).cast())
@@ -205,36 +209,10 @@ fn retire(index: usize) {
 /// True only for the exact build selected by the loader and audited entry bytes.
 /// This is a binary/ABI check; it is not a claim of radio or hardware validation.
 pub fn supported() -> bool {
-    if option_env!("CANOPUS_TARGET_ID") != Some("xiaomi-band-11-4.100.155") {
+    if !abi::SUPPORTED || option_env!("CANOPUS_TARGET_ID") != Some(abi::TARGET_ID) {
         return false;
     }
-    const SIGNATURES: &[(usize, [u8; 12])] = &[
-        (
-            0xc46b5a0,
-            [
-                0x2d, 0xe9, 0xf0, 0x47, 0xad, 0xf5, 0x32, 0x7d, 0x00, 0xaf, 0x8a, 0x46,
-            ],
-        ),
-        (
-            0xc46b68e,
-            [
-                0x2d, 0xe9, 0xf0, 0x43, 0x05, 0x46, 0xad, 0xf5, 0x33, 0x7d, 0x00, 0xaf,
-            ],
-        ),
-        (
-            0xc863bb4,
-            [
-                0x2d, 0xe9, 0xf0, 0x4f, 0x83, 0xb0, 0xdf, 0xf8, 0xc4, 0xa0, 0x81, 0x46,
-            ],
-        ),
-        (
-            0xc871558,
-            [
-                0x2d, 0xe9, 0xf0, 0x47, 0x82, 0xb0, 0x16, 0x7a, 0x14, 0x46, 0x06, 0xf0,
-            ],
-        ),
-    ];
-    SIGNATURES.iter().all(|(address, bytes)| {
+    abi::SIGNATURES.iter().all(|(address, bytes)| {
         bytes.iter().enumerate().all(|(offset, byte)| unsafe {
             ptr::read_volatile((*address + offset) as *const u8) == *byte
         })
@@ -295,11 +273,11 @@ pub fn ensure_client() -> Result<(), Error> {
         // loop. Creating a second client would duplicate the IPC identity and
         // can block while starting another loop. We only add our own callback
         // registration; the stock callback table remains untouched.
-        let client = unsafe { pointer(ADAPTER) };
+        let client = unsafe { pointer(abi::D_ADAPTER_INSTANCE) };
         if client == 0 {
             return Err(Error::NotReady);
         }
-        let business_loop = unsafe { pointer(client + 56) };
+        let business_loop = unsafe { pointer(client + abi::ADAPTER_LOOP) };
         if business_loop == 0 {
             return Err(Error::NotReady);
         }
@@ -311,7 +289,7 @@ pub fn ensure_client() -> Result<(), Error> {
         if ADAPTER_REGISTERED.load(Ordering::Acquire) == 0 {
             let registration = unsafe {
                 fw!(
-                    0xc46a38e,
+                    abi::F_ADAPTER_REGISTER,
                     unsafe extern "C" fn(usize, *const usize) -> usize,
                     client,
                     (&ADAPTER_CALLBACKS as *const AdapterCallbacks).cast()
@@ -344,14 +322,28 @@ fn adapter() -> Result<usize, Error> {
     }
     unsafe {
         crate::qjs::trace(adapter as u32);
-        crate::qjs::trace(ptr::read_unaligned((adapter + 48) as *const i32) as u32);
+        crate::qjs::trace(
+            ptr::read_unaligned((adapter + abi::ADAPTER_STATE_WORD) as *const i32) as u32,
+        );
     }
-    let state = unsafe { fw!(0xc46a44c, unsafe extern "C" fn(usize) -> i32, adapter) };
+    let state = unsafe {
+        fw!(
+            abi::F_ADAPTER_GET_STATE,
+            unsafe extern "C" fn(usize) -> i32,
+            adapter
+        )
+    };
     unsafe {
         crate::qjs::trace(200 + state as u32);
     }
     if state == 0 {
-        let result = unsafe { fw!(0xc905902, unsafe extern "C" fn(usize) -> i32, adapter) };
+        let result = unsafe {
+            fw!(
+                abi::F_ADAPTER_ENABLE,
+                unsafe extern "C" fn(usize) -> i32,
+                adapter
+            )
+        };
         unsafe {
             crate::qjs::trace(result as u32);
         }
@@ -359,7 +351,7 @@ fn adapter() -> Result<usize, Error> {
             return Err(Error::Backend(result));
         }
     }
-    if state != 4 {
+    if state != abi::ADAPTER_READY_STATE {
         return Err(Error::NotReady);
     }
     Ok(adapter)
@@ -377,9 +369,10 @@ fn start_scan_owner(service: Service) -> Result<(), Error> {
         .map_err(|_| Error::Busy)?;
     // Stock MiWear client parameters: mode2, legacy0, active1, PHY1M0, policy0.
     let params = [2u8, 0, 1, 0, 0];
+    const _: () = assert!(abi::SCAN_PARAM_SIZE == 5);
     let handle = unsafe {
         fw!(
-            0xc46b68e,
+            abi::F_SCAN_CREATE,
             unsafe extern "C" fn(usize, *const u8, *const u8, *const ScanCallbacks) -> usize,
             adapter,
             params.as_ptr(),
@@ -420,7 +413,7 @@ fn stop_scan_owner(service: Service) -> Result<(), Error> {
     let adapter = CLIENT.load(Ordering::Acquire);
     let result = unsafe {
         fw!(
-            0xc46b730,
+            abi::F_SCAN_STOP,
             unsafe extern "C" fn(usize, usize) -> i32,
             adapter,
             handle
@@ -447,13 +440,14 @@ fn start_advertising_owner(service: Service, data: &[u8]) -> Result<(), Error> {
         .compare_exchange(0, STARTING, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| Error::Busy)?;
     // bt_le_adv_param_t, recovered from CLI and advertising.c consumer.
-    let mut params = [0u8; 28];
-    params[6] = 5; // legacy ADV_IND, connectable+scannable, no directed peer
-    params[15] = 0xf6; // tx power -10dBm, same stock payment/unlock policy
-    params[16..20].copy_from_slice(&320u32.to_le_bytes()); // 200ms at 0.625ms units
+    let mut params = [0u8; abi::ADV_PARAM_SIZE];
+    params[abi::ADV_PARAM_MODE] = 5; // legacy ADV_IND, connectable+scannable, no directed peer
+    params[abi::ADV_PARAM_TX_POWER] = 0xf6; // tx power -10dBm, same stock payment/unlock policy
+    let interval = abi::ADV_PARAM_INTERVAL;
+    params[interval..interval + 4].copy_from_slice(&320u32.to_le_bytes()); // 200ms at 0.625ms units
     let handle = unsafe {
         fw!(
-            0xc46b5a0,
+            abi::F_ADVERTISING_CREATE,
             unsafe extern "C" fn(
                 usize,
                 *const u8,
@@ -501,7 +495,7 @@ fn stop_advertising_owner(service: Service) -> Result<(), Error> {
     let adapter = CLIENT.load(Ordering::Acquire);
     let result = unsafe {
         fw!(
-            0xc46b664,
+            abi::F_ADVERTISING_STOP,
             unsafe extern "C" fn(usize, usize) -> i32,
             adapter,
             handle
@@ -536,21 +530,25 @@ fn scan_report(index: usize, handle: usize, report: *const u8) {
         return;
     }
     unsafe {
-        let len = *report.add(10) as usize;
+        let len = *report.add(abi::SCAN_REPORT_LENGTH) as usize;
         if len > 31 {
             return;
         }
         let mut address = [0; 6];
-        ptr::copy_nonoverlapping(report, address.as_mut_ptr(), 6);
+        ptr::copy_nonoverlapping(
+            report.add(abi::SCAN_REPORT_ADDRESS),
+            address.as_mut_ptr(),
+            6,
+        );
         emit(Event::Advertisement {
             session: session(index),
             peer: Peer {
                 address,
-                address_type: *report.add(8),
+                address_type: *report.add(abi::SCAN_REPORT_ADDRESS_TYPE),
             },
-            rssi: *report.add(7) as i8,
-            packet_type: *report.add(9),
-            data: ::core::slice::from_raw_parts(report.add(12), len),
+            rssi: *report.add(abi::SCAN_REPORT_RSSI) as i8,
+            packet_type: *report.add(abi::SCAN_REPORT_PACKET_TYPE),
+            data: ::core::slice::from_raw_parts(report.add(abi::SCAN_REPORT_DATA), len),
         });
     }
 }
@@ -773,7 +771,7 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
             Action::Close | Action::Disconnect { .. } | Action::StopScan | Action::StopAdvertising
         ),
     )?;
-    let owner = unsafe { pointer(OWNER) };
+    let owner = unsafe { pointer(abi::D_L2CAP_OWNER) };
     if owner == 0 {
         return Err(Error::Busy);
     }
@@ -822,7 +820,7 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         let business_loop = if client == 0 {
             0
         } else {
-            unsafe { pointer(client + 56) }
+            unsafe { pointer(client + abi::ADAPTER_LOOP) }
         };
         if business_loop == 0 {
             unsafe { free(work.cast()) };
@@ -836,23 +834,23 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
             (*work).work_prefix[0] = gap_prepare as *const () as usize as u32;
             (*work).work_prefix[1] = gap_done as *const () as usize as u32;
             (*work).work_prefix[2] = business_loop as u32;
-            let mutex = business_loop + 76;
-            fw!(0xc3f4bf8, unsafe extern "C" fn(usize), mutex);
-            let head = business_loop + 68;
+            let mutex = business_loop + abi::LOOP_MUTEX;
+            fw!(abi::F_UV_MUTEX_LOCK, unsafe extern "C" fn(usize), mutex);
+            let head = business_loop + abi::LOOP_QUEUE_HEAD;
             let node = work as usize + 12;
             let tail = pointer(head + 4);
             ptr::write_unaligned(node as *mut usize, head);
             ptr::write_unaligned((node + 4) as *mut usize, tail);
             ptr::write_unaligned(tail as *mut usize, node);
             ptr::write_unaligned((head + 4) as *mut usize, node);
-            let result = (*GAP_PIPE.0.get()).signal((business_loop + 104) as *mut u32);
+            let result = (*GAP_PIPE.0.get()).signal((business_loop + abi::LOOP_ASYNC) as *mut u32);
             if result != 0 {
                 // The loop cannot detach the newly inserted node until this
                 // mutex is released. Undo submission before reporting failure.
                 ptr::write_unaligned(tail as *mut usize, head);
                 ptr::write_unaligned((head + 4) as *mut usize, tail);
             }
-            fw!(0xc3f4c14, unsafe extern "C" fn(usize), mutex);
+            fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(usize), mutex);
             if result != 0 {
                 free(work.cast());
                 state.work.fetch_sub(1, Ordering::AcqRel);
@@ -866,7 +864,7 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
     // Failure/cancellation goes through cancel_work, including owner shutdown.
     unsafe {
         fw!(
-            0xc863bb4,
+            abi::F_BT_QUEUE_EXTERNAL,
             unsafe extern "C" fn(
                 usize,
                 extern "C" fn(usize, u32, *mut Work) -> i32,
@@ -916,7 +914,7 @@ pub fn register(service: Service) -> Result<(), Error> {
     enqueue(service, Action::Register, &[])
 }
 pub fn connect(service: Service, link: LinkId, peer: Peer, spsm: u8) -> Result<(), Error> {
-    if spsm < 0x80 || peer.address_type > 3 {
+    if spsm < abi::COC_PSM_MIN as u8 || peer.address_type > 3 {
         return Err(Error::InvalidArgument);
     }
     enqueue(
@@ -1003,7 +1001,7 @@ extern "C" fn gap_done(work: *mut Work, status: i32) {
         } else if let Err(error) = valid(service, stopping) {
             Err(error)
         } else {
-            perform(pointer(OWNER), &*work)
+            perform(pointer(abi::D_L2CAP_OWNER), &*work)
         };
         if let Err(error) = result {
             emit(Event::Failed {
@@ -1116,7 +1114,7 @@ unsafe fn defer_send(work: *mut Work) -> Result<bool, Error> {
         return Err(Error::Busy);
     }
     let host = fw!(
-        0xc86d8d0,
+        abi::F_L2CAP_FIND_CHANNEL,
         unsafe extern "C" fn(usize, u16) -> usize,
         0,
         channel.cid
@@ -1124,12 +1122,12 @@ unsafe fn defer_send(work: *mut Work) -> Result<bool, Error> {
     if host == 0 {
         return Err(Error::Disconnected);
     }
-    let queue = ptr::read_unaligned((host + 4) as *const usize);
+    let queue = ptr::read_unaligned((host + abi::COC_CHANNEL_QUEUE) as *const usize);
     if queue == 0 {
         return Err(Error::Disconnected);
     }
     let head = ptr::read_unaligned(queue as *const usize);
-    let credits = ptr::read_unaligned((queue + 14) as *const u16);
+    let credits = ptr::read_unaligned((queue + abi::COC_CREDIT_QUEUE_CREDITS) as *const u16);
     if head != 0 || credits == 0 {
         channel.pending = work;
         return Ok(true);
@@ -1149,7 +1147,7 @@ unsafe fn resume_send(index: usize, cid: u16) {
         ptr::null_mut()
     };
     if !pending.is_null() {
-        run_work(pointer(OWNER), 1, pending);
+        run_work(pointer(abi::D_L2CAP_OWNER), 1, pending);
     }
 }
 unsafe fn cancel_pending(work: *mut Work) {
@@ -1169,12 +1167,12 @@ unsafe fn cancel_pending(work: *mut Work) {
         .fetch_sub(1, Ordering::AcqRel);
 }
 unsafe fn config(request: *mut u8) {
-    put_word(request, 52, RECEIVE_MTU);
-    put_word(request, 60, INITIAL_CREDITS);
-    put_word(request, 62, RECEIVE_MPS);
+    put_word(request, abi::COC_CONFIG_MTU, RECEIVE_MTU);
+    put_word(request, abi::COC_CONFIG_CREDITS, INITIAL_CREDITS);
+    put_word(request, abi::COC_CONFIG_MPS, RECEIVE_MPS);
 }
 unsafe fn request() -> Result<*mut u8, Error> {
-    let p = alloc(68);
+    let p = alloc(abi::COC_REQUEST_SIZE);
     if p.is_null() {
         Err(Error::Busy)
     } else {
@@ -1185,9 +1183,19 @@ unsafe fn disconnect_cid(_owner: usize, cid: u16) -> Result<(), Error> {
     // Exactly the policy called by C872EBC after its channel lookup. Invoke it
     // on the same owner without allocating a throwaway four-byte IPC request,
     // so module heap pressure cannot prevent a queued disconnect from running.
-    let channel = fw!(0xc86d8d0, unsafe extern "C" fn(usize, u16) -> usize, 0, cid);
+    let channel = fw!(
+        abi::F_L2CAP_FIND_CHANNEL,
+        unsafe extern "C" fn(usize, u16) -> usize,
+        0,
+        cid
+    );
     if channel != 0 {
-        fw!(0xc872dc0, unsafe extern "C" fn(usize, u16), channel, 9);
+        fw!(
+            abi::F_L2CAP_DISCONNECT_CID,
+            unsafe extern "C" fn(usize, u16),
+            channel,
+            abi::COC_DISCONNECT_POLICY
+        );
     }
     Ok(())
 }
@@ -1208,27 +1216,37 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
             // Stock's dynamic allocator wraps forever when the registry is
             // full. Preflight on this same owner task bounds that search.
             let mut selected = None;
-            for psm in 0x80u16..=0xff {
-                if fw!(0xc869884, unsafe extern "C" fn(u16, u8) -> usize, psm, 3) == 0 {
+            for psm in abi::COC_PSM_MIN..=abi::COC_PSM_MAX {
+                if fw!(
+                    abi::F_L2CAP_FIND_LE_PSM,
+                    unsafe extern "C" fn(u16, u8) -> usize,
+                    psm,
+                    abi::COC_PSM_TRANSPORT
+                ) == 0
+                {
                     selected = Some(psm);
                     break;
                 }
             }
             let selected = selected.ok_or(Error::Busy)?;
             // Registry nodes have an eight-byte list header before the payload.
-            let allocation = alloc(16);
+            let allocation = alloc(abi::COC_REGISTER_NODE_SIZE);
             if allocation.is_null() {
                 return Err(Error::Busy);
             }
-            let p = allocation.add(8);
-            put_dword(p, 0, COC_CALLBACKS[index] as usize as u32);
-            put_word(p, 4, selected);
-            *p.add(6) = 3;
+            let p = allocation.add(abi::COC_REGISTER_NODE_PAYLOAD);
+            put_dword(
+                p,
+                abi::COC_REGISTER_NODE_CALLBACK,
+                COC_CALLBACKS[index] as usize as u32,
+            );
+            put_word(p, abi::COC_REGISTER_NODE_PSM, selected);
+            *p.add(abi::COC_REGISTER_NODE_TRANSPORT) = abi::COC_PSM_TRANSPORT;
             fw!(
-                0xc86a268,
+                abi::F_L2CAP_REGISTER_PSM,
                 unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                 owner,
-                1,
+                abi::COC_QUEUE_EVENT,
                 p
             );
         }
@@ -1240,8 +1258,14 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
             // something is free; exhaustion otherwise spins the owner forever.
             // No other owner work can consume a CID between this and connect.
             let mut cid_available = false;
-            for cid in 0x40u16..=0x7f {
-                if fw!(0xc86d8d0, unsafe extern "C" fn(usize, u16) -> usize, 0, cid) == 0 {
+            for cid in abi::COC_CID_MIN..=abi::COC_CID_MAX {
+                if fw!(
+                    abi::F_L2CAP_FIND_CHANNEL,
+                    unsafe extern "C" fn(usize, u16) -> usize,
+                    0,
+                    cid
+                ) == 0
+                {
                     cid_available = true;
                     break;
                 }
@@ -1250,20 +1274,24 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                 return Err(Error::Busy);
             }
             let p = request()?;
-            put_word(p, 2, psm as u16);
-            *p.add(8) = 1;
-            put_dword(p, 12, COC_CALLBACKS[index] as usize as u32);
-            ptr::copy_nonoverlapping(peer.address.as_ptr(), p.add(16), 6);
-            *p.add(22) = peer.address_type;
+            put_word(p, abi::COC_REQUEST_PSM, psm as u16);
+            *p.add(abi::COC_REQUEST_FLAGS) = 1;
+            put_dword(
+                p,
+                abi::COC_REQUEST_CALLBACK,
+                COC_CALLBACKS[index] as usize as u32,
+            );
+            ptr::copy_nonoverlapping(peer.address.as_ptr(), p.add(abi::COC_REQUEST_ADDRESS), 6);
+            *p.add(abi::COC_REQUEST_ADDRESS_TYPE) = peer.address_type;
             config(p);
             (*state.owner.get()).connecting = Some(link);
             // This owner handler emits event2 synchronously, binding the newly
             // allocated CID to `link` before any ready/data event can occur.
             fw!(
-                0xc871558,
+                abi::F_L2CAP_CONNECT,
                 unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                 owner,
-                1,
+                abi::COC_QUEUE_EVENT,
                 p
             );
             (*state.owner.get()).connecting = None;
@@ -1306,15 +1334,19 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                 }
                 Err(error) => return Err(error),
             };
-            put_word(p, 0, channel.cid);
-            put_word(p, 4, if link.is_some() { 0 } else { 4 });
+            put_word(p, abi::COC_REQUEST_CID, channel.cid);
+            put_word(
+                p,
+                abi::COC_REQUEST_STATUS,
+                if link.is_some() { 0 } else { 4 },
+            );
             channel.request = 0;
             config(p);
             fw!(
-                0xc873020,
+                abi::F_L2CAP_ACCEPT,
                 unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                 owner,
-                1,
+                abi::COC_QUEUE_EVENT,
                 p
             );
         }
@@ -1350,17 +1382,17 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                 send_empty(owner, channel.cid)?;
             } else {
                 let p = new_buffer(length, 12)?;
-                put_dword(p, 4, channel.cid as u32);
+                put_dword(p, abi::SDU_BUFFER_CID, channel.cid as u32);
                 ptr::copy_nonoverlapping(
                     work.data.as_ptr(),
-                    p.add(4 + word(p, 2) as usize),
+                    p.add(abi::SDU_BUFFER_PAYLOAD + word(p, abi::SDU_BUFFER_OFFSET) as usize),
                     length as usize,
                 );
                 fw!(
-                    0xc86e7f8,
+                    abi::F_L2CAP_SEND,
                     unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                     owner,
-                    1,
+                    abi::COC_QUEUE_EVENT,
                     p
                 );
             }
@@ -1374,13 +1406,13 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                     state.psm.store(psm, Ordering::Release);
                     return Err(Error::Busy);
                 }
-                put_word(p, 4, psm);
-                *p.add(6) = 3;
+                put_word(p, abi::COC_REGISTER_NODE_PSM, psm);
+                *p.add(abi::COC_REGISTER_NODE_TRANSPORT) = abi::COC_PSM_TRANSPORT;
                 fw!(
-                    0xc872e30,
+                    abi::F_L2CAP_RELEASE_PSM,
                     unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                     owner,
-                    1,
+                    abi::COC_QUEUE_EVENT,
                     p
                 );
             }
@@ -1399,16 +1431,18 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
     Ok(())
 }
 unsafe fn new_buffer(length: u16, headroom: u16) -> Result<*mut u8, Error> {
-    let offset = headroom.checked_add(4).ok_or(Error::InvalidArgument)?;
+    let offset = headroom
+        .checked_add(abi::SDU_BUFFER_PAYLOAD as u16)
+        .ok_or(Error::InvalidArgument)?;
     let end = length.checked_add(offset).ok_or(Error::InvalidArgument)?;
-    let p = alloc(end as usize + 6);
+    let p = alloc(end as usize + abi::SDU_BUFFER_ALLOC_TAIL);
     if p.is_null() {
         return Err(Error::Busy);
     }
-    put_word(p, 0, end);
-    put_word(p, 2, offset);
+    put_word(p, abi::SDU_BUFFER_END, end);
+    put_word(p, abi::SDU_BUFFER_OFFSET, offset);
     if offset > 7 {
-        *p.add(8) = 3;
+        *p.add(abi::SDU_BUFFER_META) = abi::SDU_BUFFER_META_VALUE;
     }
     Ok(p)
 }
@@ -1416,33 +1450,42 @@ unsafe fn new_buffer(length: u16, headroom: u16) -> Result<*mut u8, Error> {
 // enqueue its one first+last fragment into that SAME credit-controlled queue.
 // No second host, raw HCI path, application framing, or credit implementation.
 unsafe fn send_empty(owner: usize, cid: u16) -> Result<(), Error> {
-    let channel = fw!(0xc86d8d0, unsafe extern "C" fn(usize, u16) -> usize, 0, cid);
+    let channel = fw!(
+        abi::F_L2CAP_FIND_CHANNEL,
+        unsafe extern "C" fn(usize, u16) -> usize,
+        0,
+        cid
+    );
     if channel == 0 {
         return Err(Error::Disconnected);
     }
-    let queue = ptr::read_unaligned((channel + 4) as *const usize);
+    let queue = ptr::read_unaligned((channel + abi::COC_CHANNEL_QUEUE) as *const usize);
     if queue == 0 {
         return Err(Error::Disconnected);
     }
     let p = new_buffer(2, 12)?;
-    *p.add(8) = 1;
-    put_word(p, 4 + word(p, 2) as usize, 0);
-    let allocation = alloc(16);
+    *p.add(abi::SDU_BUFFER_META) = 1;
+    put_word(
+        p,
+        abi::SDU_BUFFER_PAYLOAD + word(p, abi::SDU_BUFFER_OFFSET) as usize,
+        0,
+    );
+    let allocation = alloc(abi::FRAGMENT_NODE_SIZE);
     if allocation.is_null() {
         free(p);
         return Err(Error::Busy);
     }
-    let node = allocation.add(8);
-    put_dword(node, 0, p as usize as u32);
-    *node.add(4) = 0x81;
+    let node = allocation.add(abi::FRAGMENT_NODE_PAYLOAD);
+    put_dword(node, abi::FRAGMENT_NODE_BUFFER, p as usize as u32);
+    *node.add(abi::FRAGMENT_NODE_FLAGS) = abi::FRAGMENT_FLAGS_FIRST_LAST;
     fw!(
-        0xc862c8e,
+        abi::F_L2CAP_QUEUE_PUSH,
         unsafe extern "C" fn(usize, *mut u8) -> i32,
         queue,
         node
     );
     fw!(
-        0xc86b40e,
+        abi::F_L2CAP_CREDIT_FLUSH,
         unsafe extern "C" fn(usize, usize) -> i32,
         queue,
         channel
@@ -1456,29 +1499,29 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
         return;
     }
     let state = &STATE[index];
-    let owner = pointer(OWNER);
+    let owner = pointer(abi::D_L2CAP_OWNER);
     match event {
-        9 => {
-            let psm = word(p, 4);
+        abi::COC_EVENT_PSM_REGISTERED => {
+            let psm = word(p, abi::COC_EV_PSM_CID);
             state.psm.store(psm, Ordering::Release);
             emit(Event::Registered {
                 session: session(index),
                 spsm: psm as u8,
             });
         }
-        1 | 2 => {
-            let cid = word(p, 0);
+        abi::COC_EVENT_INCOMING | abi::COC_EVENT_ASSIGNED => {
+            let cid = word(p, abi::COC_EV_REQUEST_CID);
             let vacant = (*state.owner.get())
                 .channels
                 .iter()
                 .position(|c| c.cid == 0);
             let mut address = [0; 6];
-            ptr::copy_nonoverlapping(p.add(16), address.as_mut_ptr(), 6);
+            ptr::copy_nonoverlapping(p.add(abi::COC_EV_REQUEST_ADDRESS), address.as_mut_ptr(), 6);
             let peer = Peer {
                 address,
-                address_type: *p.add(22),
+                address_type: *p.add(abi::COC_EV_REQUEST_ADDRESS_TYPE),
             };
-            let link = if event == 2 {
+            let link = if event == abi::COC_EVENT_ASSIGNED {
                 (*state.owner.get()).connecting
             } else {
                 None
@@ -1487,33 +1530,39 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 let token = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed).max(1);
                 (*state.owner.get()).channels[position] = Channel {
                     cid,
-                    request: if event == 1 { token } else { 0 },
+                    request: if event == abi::COC_EVENT_INCOMING {
+                        token
+                    } else {
+                        0
+                    },
                     link,
                     opened: false,
                     remote_mtu: 0,
                     pending: ptr::null_mut(),
                 };
                 state.live.fetch_add(1, Ordering::AcqRel);
-                if event == 1 && state.closing.load(Ordering::Acquire) == 0 {
+                if event == abi::COC_EVENT_INCOMING && state.closing.load(Ordering::Acquire) == 0 {
                     emit(Event::Incoming {
                         session: session(index),
                         request: IncomingId(token),
                         peer,
                         cid,
-                        spsm: word(p, 2) as u8,
+                        spsm: word(p, abi::COC_EV_REQUEST_PSM) as u8,
                     });
                 } else if let Some(link) = link {
                     emit(Event::Assigned { link, cid });
                 }
             }
-            if (vacant.is_none() || state.closing.load(Ordering::Acquire) != 0) && event == 1 {
-                put_word(p, 4, 4);
+            if (vacant.is_none() || state.closing.load(Ordering::Acquire) != 0)
+                && event == abi::COC_EVENT_INCOMING
+            {
+                put_word(p, abi::COC_REQUEST_STATUS, 4);
                 config(p);
                 fw!(
-                    0xc873020,
+                    abi::F_L2CAP_ACCEPT,
                     unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
                     owner,
-                    1,
+                    abi::COC_QUEUE_EVENT,
                     p
                 );
                 retire(index);
@@ -1523,15 +1572,15 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
             // its live channel intact until the owner handler returns;
             // perform(Connect) handles a concurrent close immediately then.
         }
-        3 => {
-            let cid = word(p, 108);
+        abi::COC_EVENT_OPEN => {
+            let cid = word(p, abi::COC_EV_COMPLETE_CID);
             if let Some(channel) = (*state.owner.get())
                 .channels
                 .iter_mut()
                 .find(|c| c.cid == cid)
             {
                 channel.opened = true;
-                channel.remote_mtu = word(p, 72);
+                channel.remote_mtu = word(p, abi::COC_EV_COMPLETE_REMOTE_MTU);
                 if let Some(link) = channel.link {
                     emit(Event::Opened {
                         link,
@@ -1544,9 +1593,9 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 let _ = disconnect_cid(owner, cid);
             }
         }
-        6 => {
-            let cid = word(p, 0);
-            let reason = word(p, 2);
+        abi::COC_EVENT_CLOSED => {
+            let cid = word(p, abi::COC_EV_CLOSE_CID);
+            let reason = word(p, abi::COC_EV_CLOSE_REASON);
             if let Some(position) = (*state.owner.get())
                 .channels
                 .iter()
@@ -1561,8 +1610,15 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
-        7 | 17 => {
-            let cid = word(p, if event == 7 { 4 } else { 0 });
+        abi::COC_EVENT_DATA | abi::COC_EVENT_CREDITS => {
+            let cid = word(
+                p,
+                if event == abi::COC_EVENT_DATA {
+                    abi::COC_EV_DATA_CID
+                } else {
+                    abi::COC_EV_CREDIT_CID
+                },
+            );
             if let Some(channel) = (*state.owner.get())
                 .channels
                 .iter()
@@ -1570,15 +1626,15 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 .copied()
             {
                 if let Some(link) = channel.link {
-                    if event == 17 {
+                    if event == abi::COC_EVENT_CREDITS {
                         emit(Event::Credits {
                             link,
                             cid,
-                            added: word(p, 2),
+                            added: word(p, abi::COC_EV_CREDIT_ADDED),
                         });
                     } else {
-                        let end = word(p, 0);
-                        let offset = word(p, 2);
+                        let end = word(p, abi::COC_EV_DATA_END);
+                        let offset = word(p, abi::COC_EV_DATA_OFFSET);
                         if end < offset || end - offset > RECEIVE_MTU {
                             emit(Event::Failed {
                                 session: session(index),
@@ -1592,7 +1648,7 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                                 link,
                                 cid,
                                 data: ::core::slice::from_raw_parts(
-                                    p.add(4 + offset as usize),
+                                    p.add(abi::COC_EV_DATA_BASE + offset as usize),
                                     (end - offset) as usize,
                                 ),
                             });
@@ -1601,21 +1657,21 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
-        8 => {
+        abi::COC_EVENT_LOCAL_FLOW => {
             // C86DA74 emits a separately allocated six-byte local flow report.
             // Legacy LE submission is governed by event17 credits; this event
             // changes neither connection state nor responsibility for an SDU.
         }
         _ => { /* no event4/5 producer exists in this legacy LE channel path */ }
     }
-    if event == 17 {
-        resume_send(index, word(p, 0));
+    if event == abi::COC_EVENT_CREDITS {
+        resume_send(index, word(p, abi::COC_EV_CREDIT_CID));
     }
     free(p);
     retire(index);
 }
 
 const _: () = {
-    assert!(::core::mem::size_of::<ScanCallbacks>() == 16);
-    assert!(::core::mem::size_of::<AdvCallbacks>() == 12);
+    assert!(::core::mem::size_of::<ScanCallbacks>() as u32 == abi::SCAN_CALLBACKS_SIZE);
+    assert!(::core::mem::size_of::<AdvCallbacks>() == abi::ADV_CALLBACKS_SIZE);
 };

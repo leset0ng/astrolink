@@ -1,4 +1,6 @@
-//! Exact Q66 .155 libuv wake bridge across NuttX task-group fd tables.
+//! libuv wake bridge across NuttX task-group fd tables.
+//! Firmware addresses and structure offsets come from `crate::abi`.
+use crate::abi;
 use core::{
     ffi::c_void,
     mem, ptr,
@@ -30,17 +32,17 @@ impl PipeWake {
         if self.open {
             return Ok(());
         }
-        let fd = ptr::read_unaligned((loop_pointer + 316) as *const i32);
+        let fd = ptr::read_unaligned((loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
         let mut source = ptr::null_mut::<c_void>();
         let result = fw!(
-            0x0c332c90,
+            abi::F_FS_GETFILEP,
             unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
         )(fd, &mut source);
         if result != 0 {
             return Err(result);
         }
         let result = self.duplicate(source);
-        fw!(0x0c334998, unsafe extern "C" fn(*mut c_void) -> i32)(source);
+        fw!(abi::F_FS_PUTFILEP, unsafe extern "C" fn(*mut c_void) -> i32)(source);
         result
     }
 
@@ -50,8 +52,8 @@ impl PipeWake {
         if self.open {
             return Ok(());
         }
-        let key = ptr::read_volatile(0x200bd444 as *const u32);
-        if key > 3 || loop_pointer == 0 {
+        let key = ptr::read_volatile(abi::D_UV_KEY as *const u32);
+        if key > abi::UV_KEY_LIMIT || loop_pointer == 0 {
             return Err(-95);
         }
         let mut lookup = Lookup {
@@ -61,7 +63,7 @@ impl PipeWake {
             write: ptr::null_mut(),
         };
         fw!(
-            0x0c355564,
+            abi::F_NXSCHED_FOREACH,
             unsafe extern "C" fn(unsafe extern "C" fn(usize, *mut Lookup), *mut Lookup)
         )(find_loop_files, &mut lookup);
         let result = if pipe_pair(lookup.read, lookup.write) {
@@ -73,7 +75,7 @@ impl PipeWake {
         // scheduler/interrupt critical section. Only pinned files escape it.
         for file in [lookup.read, lookup.write] {
             if !file.is_null() {
-                fw!(0x0c334998, unsafe extern "C" fn(*mut c_void) -> i32)(file);
+                fw!(abi::F_FS_PUTFILEP, unsafe extern "C" fn(*mut c_void) -> i32)(file);
             }
         }
         result
@@ -82,7 +84,7 @@ impl PipeWake {
     /// `source` must be pinned by its owning filelist reference for this call.
     pub(crate) unsafe fn duplicate(&mut self, source: *mut c_void) -> Result<(), i32> {
         let copied = fw!(
-            0x0c341c7a,
+            abi::F_FILE_DUP3,
             unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32
         )(source, self.file.as_mut_ptr().cast(), 0);
         self.open = copied == 0;
@@ -96,7 +98,7 @@ impl PipeWake {
     pub(crate) unsafe fn close(&mut self) {
         if self.open {
             self.open = false;
-            fw!(0x0c340a24, unsafe extern "C" fn(*mut c_void) -> i32)(
+            fw!(abi::F_FILE_CLOSE, unsafe extern "C" fn(*mut c_void) -> i32)(
                 self.file.as_mut_ptr().cast(),
             );
         }
@@ -108,8 +110,8 @@ impl PipeWake {
         if !self.open || handle.is_null() {
             return -9;
         }
-        let busy = &*handle.add(6).cast::<AtomicU32>();
-        let pending = &*handle.add(15).cast::<AtomicU32>();
+        let busy = &*handle.add(abi::ASYNC_BUSY_WORD).cast::<AtomicU32>();
+        let pending = &*handle.add(abi::ASYNC_PENDING_WORD).cast::<AtomicU32>();
         if pending.load(Ordering::Acquire) != 0 {
             return 0;
         }
@@ -119,7 +121,7 @@ impl PipeWake {
             let byte = 1u8;
             loop {
                 let written = fw!(
-                    0x0c33cc4c,
+                    abi::F_FILE_WRITE,
                     unsafe extern "C" fn(*mut c_void, *const u8, usize) -> isize
                 )(self.file.as_mut_ptr().cast(), &byte, 1);
                 if written == -4 {
@@ -154,7 +156,7 @@ unsafe extern "C" fn find_loop_files(tcb: usize, lookup: *mut Lookup) {
     if !lookup.read.is_null() || !lookup.write.is_null() || tcb == 0 {
         return;
     }
-    let tls = word(tcb + 100);
+    let tls = word(tcb + abi::TCB_TLS);
     if !ram_pointer(tls) {
         return;
     }
@@ -162,25 +164,30 @@ unsafe extern "C" fn find_loop_files(tcb: usize, lookup: *mut Lookup) {
     if !ram_pointer(taskinfo) {
         return;
     }
-    let uvstate = word(taskinfo + 16 + 4 * lookup.key as usize);
-    if !ram_pointer(uvstate) || word(uvstate + 664) != lookup.loop_pointer {
+    let uvstate =
+        word(taskinfo + abi::TASKINFO_UVSTATE + abi::TASKINFO_UVSTATE_STRIDE * lookup.key as usize);
+    if !ram_pointer(uvstate) || word(uvstate + abi::UVSTATE_LOOP) != lookup.loop_pointer {
         return;
     }
-    let group = word(tcb + 8);
+    let group = word(tcb + abi::TCB_GROUP);
     if !ram_pointer(group) {
         return;
     }
-    let filelist = group + 96;
-    let count = ptr::read_unaligned(filelist as *const u8) as i32 * 8;
-    let read_fd = ptr::read_unaligned((lookup.loop_pointer + 312) as *const i32);
-    let write_fd = ptr::read_unaligned((lookup.loop_pointer + 316) as *const i32);
+    let filelist = group + abi::GROUP_FILELIST;
+    let count = ptr::read_unaligned(filelist as *const u8) as i32 * abi::FILELIST_ROW as i32;
+    let read_fd = ptr::read_unaligned((lookup.loop_pointer + abi::LOOP_READ_FD) as *const i32);
+    let write_fd = ptr::read_unaligned((lookup.loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
     if read_fd < 0 || write_fd < 0 || read_fd >= count || write_fd >= count || read_fd == write_fd {
         return;
     }
-    lookup.read =
-        fw!(0x0c332ba2, unsafe extern "C" fn(usize, i32) -> *mut c_void)(filelist, read_fd);
-    lookup.write =
-        fw!(0x0c332ba2, unsafe extern "C" fn(usize, i32) -> *mut c_void)(filelist, write_fd);
+    lookup.read = fw!(
+        abi::F_FILES_GETFILEP,
+        unsafe extern "C" fn(usize, i32) -> *mut c_void
+    )(filelist, read_fd);
+    lookup.write = fw!(
+        abi::F_FILES_GETFILEP,
+        unsafe extern "C" fn(usize, i32) -> *mut c_void
+    )(filelist, write_fd);
 }
 unsafe fn pipe_pair(read: *mut c_void, write: *mut c_void) -> bool {
     if read.is_null() || write.is_null() {
@@ -188,11 +195,11 @@ unsafe fn pipe_pair(read: *mut c_void, write: *mut c_void) -> bool {
     }
     let read_flags = word(read as usize);
     let write_flags = word(write as usize);
-    let inode = word(read as usize + 16);
+    let inode = word(read as usize + abi::FILE_INODE);
     inode != 0
-        && inode == word(write as usize + 16)
+        && inode == word(write as usize + abi::FILE_INODE)
         && read_flags & 1 != 0
         && write_flags & 2 != 0
         && write_flags & 0x40 != 0
-        && word(inode + 16) == 0x2cb04ffc
+        && word(inode + abi::FILE_INODE) == abi::INODE_OPS_PIPE
 }

@@ -1,6 +1,9 @@
 # Q66 .155 QuickJS Feature binding
 
-This binding targets only Q66 AP `user-4.100.155-cn-202609041500`, SHA-256
+This record describes the Q66 `.155` values of
+`src/abi/xiaomi_band_11_4_100_155.rs` and the target-independent bridge in
+`src/qjs/feature.rs`. It targets only Q66 AP
+`user-4.100.155-cn-202609041500`, SHA-256
 `ea0bdf1920cb30223d616432af00565ca67622e6468328f5eab155f8cdc2fb9f`.
 Evidence was recovered from `analysis-q66-177/155/q66-ap.i64` using Hex-Rays
 and checked against ARM instructions, particularly the placement of 64-bit

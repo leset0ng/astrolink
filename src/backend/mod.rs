@@ -95,9 +95,9 @@ pub enum Event<'a> {
 pub type EventSink = for<'a> fn(Event<'a>);
 
 #[cfg(all(feature = "device", target_arch = "arm"))]
-mod q66_155;
+mod bluelet;
 #[cfg(all(feature = "device", target_arch = "arm"))]
-pub use q66_155::*;
+pub use bluelet::*;
 
 /// Host builds expose the contract without attempting firmware calls. Host
 /// tests exercise the Engine with their own explicitly supplied transport.

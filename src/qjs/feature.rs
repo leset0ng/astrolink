@@ -1,6 +1,8 @@
-//! Exact Q66 user-4.100.155 ABI. Evidence and calling conventions are recorded
-//! in docs/qjs-abi.md; addresses are Thumb entry points, not portable symbols.
+//! Feature/QJS bridge shared by every adapted target. Evidence and calling
+//! conventions are recorded in `docs/qjs-abi.md`; firmware addresses and object
+//! offsets come from `crate::abi`.
 use super::*;
+use crate::abi;
 use canopus_abi::{CanopusContext, HookType};
 use canopus_runtime::hook::Hook;
 use core::{
@@ -96,18 +98,18 @@ struct Notification {
     wake: crate::loop_dispatch::PipeWake,
 }
 unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
-    let stock_async = ptr::read_unaligned((manager + 60) as *const usize);
+    let stock_async = ptr::read_unaligned((manager + abi::MANAGER_ASYNC) as *const usize);
     if stock_async == 0 {
         return ptr::null_mut();
     }
-    let loop_pointer = ptr::read_unaligned((stock_async + 4) as *const usize);
+    let loop_pointer = ptr::read_unaligned((stock_async + abi::HANDLE_LOOP) as *const usize);
     if loop_pointer == 0 {
         return ptr::null_mut();
     }
-    let endpoint =
-        fw!(0x0c351724, unsafe extern "C" fn(usize) -> *mut Notification)(mem::size_of::<
-            Notification,
-        >());
+    let endpoint = fw!(
+        abi::F_ALLOC,
+        unsafe extern "C" fn(usize) -> *mut Notification
+    )(mem::size_of::<Notification>());
     if endpoint.is_null() {
         return endpoint;
     }
@@ -120,7 +122,7 @@ unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
     );
     (*endpoint).async_handle[0] = owner;
     let result = fw!(
-        0x0c3f45f4,
+        abi::F_UV_ASYNC_INIT,
         unsafe extern "C" fn(
             usize,
             *mut Notification,
@@ -128,7 +130,7 @@ unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
         ) -> i32
     )(loop_pointer, endpoint, notification_ready);
     if result != 0 {
-        fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
+        fw!(abi::F_FREE, unsafe extern "C" fn(*mut Notification))(endpoint);
         return ptr::null_mut();
     }
     if (*endpoint).wake.capture_current(loop_pointer).is_err() {
@@ -142,13 +144,13 @@ unsafe extern "C" fn notification_ready(endpoint: *mut Notification) {
 }
 unsafe fn close_notification(endpoint: *mut Notification) {
     fw!(
-        0x0c3ea6e4,
+        abi::F_UV_CLOSE,
         unsafe extern "C" fn(*mut Notification, unsafe extern "C" fn(*mut Notification))
     )(endpoint, notification_closed);
 }
 unsafe extern "C" fn notification_closed(endpoint: *mut Notification) {
     (*endpoint).wake.close();
-    fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
+    fw!(abi::F_FREE, unsafe extern "C" fn(*mut Notification))(endpoint);
 }
 
 struct State {
@@ -166,8 +168,8 @@ static READY: AtomicBool = AtomicBool::new(false);
 static MUTEX: Shared<[u32; 8]> = Shared(UnsafeCell::new([0; 8]));
 // Both tables retain the two Itanium ABI prefix words. Only one primary
 // dispatch slot changes in each table; secondary Application vptrs stay stock.
-const FRAMEWORK_VTABLE: usize = 0x2ca8065c;
-const APPLICATION_VTABLE: usize = 0x2ca7c2d4;
+const FRAMEWORK_VTABLE: usize = abi::D_FRAMEWORK_VTABLE;
+const APPLICATION_VTABLE: usize = abi::D_APPLICATION_VTABLE;
 static FRAMEWORK_DISPATCH: Shared<[usize; 15]> = Shared(UnsafeCell::new([0; 15]));
 static APPLICATION_DISPATCH: Shared<[usize; 52]> = Shared(UnsafeCell::new([0; 52]));
 static STATE: Shared<State> = Shared(UnsafeCell::new(State {
@@ -180,7 +182,7 @@ static STATE: Shared<State> = Shared(UnsafeCell::new(State {
 struct Guard;
 impl Guard {
     unsafe fn lock() -> Self {
-        fw!(0x0c3f4bf8, unsafe extern "C" fn(*mut c_void))(MUTEX.0.get().cast());
+        fw!(abi::F_UV_MUTEX_LOCK, unsafe extern "C" fn(*mut c_void))(MUTEX.0.get().cast());
         Self
     }
     unsafe fn state(&mut self) -> &mut State {
@@ -190,7 +192,7 @@ impl Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         unsafe {
-            fw!(0x0c3f4c14, unsafe extern "C" fn(*mut c_void))(MUTEX.0.get().cast());
+            fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(MUTEX.0.get().cast());
         }
     }
 }
@@ -211,11 +213,12 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
     if (*STATE.0.get()).hook_id >= 0 {
         return Ok(());
     }
-    let framework = ptr::read_volatile(0x200d972c as *const usize);
+    let framework = ptr::read_volatile(abi::D_FRAMEWORK as *const usize);
     if !ram_object(framework) {
         return Err(-16);
     }
-    let implementation = ptr::read_unaligned((framework + 4) as *const usize);
+    let implementation =
+        ptr::read_unaligned((framework + abi::FRAMEWORK_IMPLEMENTATION) as *const usize);
     if !ram_object(implementation) {
         return Err(-16);
     }
@@ -225,30 +228,36 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
     if current != FRAMEWORK_VTABLE {
         return Err(-16);
     }
-    let rc = fw!(0x0c3f4b64, unsafe extern "C" fn(*mut c_void) -> i32)(MUTEX.0.get().cast());
+    let rc = fw!(
+        abi::F_UV_MUTEX_INIT,
+        unsafe extern "C" fn(*mut c_void) -> i32
+    )(MUTEX.0.get().cast());
     if rc != 0 {
         return Err(rc);
     }
+    let prefix_bytes = abi::VTABLE_PREFIX_WORDS * ::core::mem::size_of::<usize>();
     ptr::copy_nonoverlapping(
-        (FRAMEWORK_VTABLE - 8) as *const usize,
+        (FRAMEWORK_VTABLE - prefix_bytes) as *const usize,
         FRAMEWORK_DISPATCH.0.get().cast::<usize>(),
-        15,
+        abi::FRAMEWORK_COPY_WORDS,
     );
     ptr::copy_nonoverlapping(
-        (APPLICATION_VTABLE - 8) as *const usize,
+        (APPLICATION_VTABLE - prefix_bytes) as *const usize,
         APPLICATION_DISPATCH.0.get().cast::<usize>(),
-        52,
+        abi::APPLICATION_COPY_WORDS,
     );
-    (*FRAMEWORK_DISPATCH.0.get())[2 + 8] = create_application as *const () as usize;
-    (*APPLICATION_DISPATCH.0.get())[2 + 2] = initialize_application as *const () as usize;
+    (*FRAMEWORK_DISPATCH.0.get())[abi::VTABLE_PREFIX_WORDS + abi::FRAMEWORK_FACTORY_SLOT] =
+        create_application as *const () as usize;
+    (*APPLICATION_DISPATCH.0.get())[abi::VTABLE_PREFIX_WORDS + abi::APPLICATION_INIT_SLOT] =
+        initialize_application as *const () as usize;
     (*STATE.0.get()).adapter = Some(adapter);
     // The real framework's recursive render/list mutex guards its app vector.
-    let framework_mutex = (implementation + 204) as *mut c_void;
-    fw!(0x0c3f4bf8, unsafe extern "C" fn(*mut c_void))(framework_mutex);
-    let first = ptr::read_unaligned((implementation + 320) as *const usize);
-    let end = ptr::read_unaligned((implementation + 324) as *const usize);
+    let framework_mutex = (implementation + abi::FRAMEWORK_MUTEX) as *mut c_void;
+    fw!(abi::F_UV_MUTEX_LOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
+    let first = ptr::read_unaligned((implementation + abi::FRAMEWORK_APPS_BEGIN) as *const usize);
+    let end = ptr::read_unaligned((implementation + abi::FRAMEWORK_APPS_END) as *const usize);
     if first != end {
-        fw!(0x0c3f4c14, unsafe extern "C" fn(*mut c_void))(framework_mutex);
+        fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
         (*STATE.0.get()).adapter = None;
         return Err(-16);
     }
@@ -260,7 +269,7 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
         &mut (*STATE.0.get()).original_framework_vtable,
         HookType::Pointer,
     );
-    fw!(0x0c3f4c14, unsafe extern "C" fn(*mut c_void))(framework_mutex);
+    fw!(abi::F_UV_MUTEX_UNLOCK, unsafe extern "C" fn(*mut c_void))(framework_mutex);
     match result {
         Ok(id) => {
             (*STATE.0.get()).hook_id = id;
@@ -282,7 +291,10 @@ unsafe extern "C" fn create_application(framework: usize, uri: *const c_char) ->
     trace(10);
     // The stock factory returns a constructed Application and has not yet
     // started its JS task. Replace its own primary dispatch pointer now.
-    let original = ptr::read_unaligned((FRAMEWORK_VTABLE + 32) as *const usize);
+    let original = ptr::read_unaligned(
+        (FRAMEWORK_VTABLE + abi::FRAMEWORK_FACTORY_SLOT * ::core::mem::size_of::<usize>())
+            as *const usize,
+    );
     let application = fw!(
         original,
         unsafe extern "C" fn(usize, *const c_char) -> usize
@@ -302,7 +314,10 @@ unsafe extern "C" fn initialize_application(
     options: usize,
     loop_pointer: usize,
 ) -> i32 {
-    let original = ptr::read_unaligned((APPLICATION_VTABLE + 8) as *const usize);
+    let original = ptr::read_unaligned(
+        (APPLICATION_VTABLE + abi::APPLICATION_INIT_SLOT * ::core::mem::size_of::<usize>())
+            as *const usize,
+    );
     let result = fw!(original, unsafe extern "C" fn(usize, usize, usize) -> i32)(
         application,
         options,
@@ -311,21 +326,21 @@ unsafe extern "C" fn initialize_application(
     trace(20);
     // Runs synchronously on this Application's JS task between its stock
     // initialize and run calls. Registry mutation cannot race require/eval.
-    let runtime = ptr::read_unaligned((application + 100) as *const usize);
+    let runtime = ptr::read_unaligned((application + abi::APPLICATION_RUNTIME) as *const usize);
     if runtime == 0 {
         return result;
     }
-    let manager = ptr::read_unaligned((runtime + 116) as *const usize);
+    let manager = ptr::read_unaligned((runtime + abi::RUNTIME_MANAGER) as *const usize);
     if manager == 0 {
         return result;
     }
-    let registry = ptr::read_unaligned((manager + 4) as *const usize);
+    let registry = ptr::read_unaligned((manager + abi::MANAGER_REGISTRY) as *const usize);
     if registry == 0 {
         return result;
     }
     trace(21);
     fw!(
-        0x0c495f2c,
+        abi::F_FEATURE_REGISTER,
         unsafe extern "C" fn(usize, *const Description) -> i32
     )(registry, &DESCRIPTION)
 }
@@ -333,7 +348,7 @@ unsafe extern "C" fn initialize_application(
 unsafe extern "C" fn on_create(context: Context, prototype: usize) {
     trace(30);
     // FeaturePrototypeQjs, not the QJS class object constructed at C4929C8.
-    let manager = ptr::read_unaligned((prototype + 12) as *const usize);
+    let manager = ptr::read_unaligned((prototype + abi::PROTOTYPE_MANAGER) as *const usize);
     let mut guard = Guard::lock();
     let state = guard.state();
     let Some(index) = state.owners.iter().position(|owner| owner.id == 0) else {
@@ -361,7 +376,7 @@ unsafe extern "C" fn on_create(context: Context, prototype: usize) {
 
 unsafe extern "C" fn on_required(context: Context, instance: usize) {
     trace(31);
-    let object = ptr::read_unaligned((instance + 112) as *const Value);
+    let object = ptr::read_unaligned((instance + abi::INSTANCE_HANDLE) as *const Value);
     for (name, operation, argc) in [
         (b"getCapabilities\0".as_slice(), 0, 0),
         (b"createSession\0".as_slice(), 1, 1),
@@ -369,7 +384,7 @@ unsafe extern "C" fn on_required(context: Context, instance: usize) {
         (b"subscribe\0".as_slice(), 3, 1),
     ] {
         let function = fw!(
-            0x0c3b98d0,
+            abi::F_QJS_NEW_C_FUNCTION2,
             unsafe extern "C" fn(Context, usize, *const c_char, i32, i32, i32) -> Value
         )(
             context,
@@ -501,7 +516,7 @@ unsafe extern "C" fn drain(active: i32, owner_id: usize) {
             return;
         }
         let result = fw!(
-            0x0c3ccb00,
+            abi::F_QJS_CALL,
             unsafe extern "C" fn(Context, Value, Value, i32, *const Value) -> Value
         )(owner.context, callback, UNDEFINED, 1, &value);
         trace(94);
@@ -571,7 +586,11 @@ unsafe extern "C" fn native_call(
             trace(41);
             let value = args.first().copied().unwrap_or(UNDEFINED);
             if value != UNDEFINED
-                && fw!(0x0c3bf280, unsafe extern "C" fn(Context, Value) -> i32)(context, value) == 0
+                && fw!(
+                    abi::F_QJS_IS_FUNCTION,
+                    unsafe extern "C" fn(Context, Value) -> i32
+                )(context, value)
+                    == 0
             {
                 return integer(-ERROR_INVALID_ARGUMENT);
             }
@@ -665,15 +684,18 @@ unsafe fn duplicate(value: Value) -> Value {
     value
 }
 unsafe fn free(context: Context, value: Value) {
-    fw!(0x0c3b813c, unsafe extern "C" fn(Context, Value))(context, value);
+    fw!(abi::F_QJS_FREE_VALUE, unsafe extern "C" fn(Context, Value))(context, value);
 }
 unsafe fn clear_exception(context: Context) {
-    let value = fw!(0x0c3b793e, unsafe extern "C" fn(Context) -> Value)(context);
+    let value = fw!(
+        abi::F_QJS_GET_EXCEPTION,
+        unsafe extern "C" fn(Context) -> Value
+    )(context);
     free(context, value);
 }
 unsafe fn string(context: Context, bytes: &[u8]) -> Value {
     fw!(
-        0x0c3b69e8,
+        abi::F_QJS_NEW_STRING_LEN,
         unsafe extern "C" fn(Context, *const u8, usize) -> Value
     )(context, bytes.as_ptr(), bytes.len())
 }
@@ -683,7 +705,7 @@ unsafe fn string_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     }
     let mut len = 0;
     let pointer = fw!(
-        0x0c3b883c,
+        abi::F_QJS_TO_CSTRING_LEN2,
         unsafe extern "C" fn(Context, *mut usize, Value, i32) -> *const u8
     )(context, &mut len, value, 0);
     if pointer.is_null() {
@@ -696,14 +718,18 @@ unsafe fn string_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     } else {
         None
     };
-    fw!(0x0c3b89f2, unsafe extern "C" fn(Context, *const u8))(context, pointer);
+    fw!(
+        abi::F_QJS_FREE_CSTRING,
+        unsafe extern "C" fn(Context, *const u8)
+    )(context, pointer);
     result
 }
 unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option<usize> {
     if (value >> 32) as i32 != -1 {
         return None;
     }
-    let class = ptr::read_unaligned((value as u32 as usize + 6) as *const u16);
+    let class =
+        ptr::read_unaligned((value as u32 as usize + abi::JSVALUE_CLASS_OFFSET) as *const u16);
     let mut offset = 0;
     let mut length = 0;
     let mut element_size = 0;
@@ -711,7 +737,7 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
         duplicate(value)
     } else if class == 23 {
         fw!(
-            0x0c3e848c,
+            abi::F_QJS_GET_TYPED_ARRAY_BUFFER,
             unsafe extern "C" fn(Context, Value, *mut usize, *mut usize, *mut usize) -> Value
         )(context, value, &mut offset, &mut length, &mut element_size)
     } else {
@@ -723,19 +749,20 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     }
     let mut buffer_len = 0;
     let pointer = fw!(
-        0x0c3e7f9c,
+        abi::F_QJS_GET_ARRAY_BUFFER,
         unsafe extern "C" fn(Context, *mut usize, Value) -> *const u8
     )(context, &mut buffer_len, buffer);
     if class == 19 {
         length = buffer_len;
     }
-    let payload = ptr::read_unaligned((buffer as u32 as usize + 32) as *const usize);
+    let payload =
+        ptr::read_unaligned((buffer as u32 as usize + abi::ARRAY_BUFFER_DATA) as *const usize);
     if payload == 0 {
         free(context, buffer);
         clear_exception(context);
         return None;
     }
-    let detached = ptr::read((payload + 4) as *const u8) != 0;
+    let detached = ptr::read((payload + abi::ARRAY_BUFFER_DETACHED) as *const u8) != 0;
     let valid = !detached
         && (length == 0 || !pointer.is_null())
         && length <= out.len()
@@ -751,14 +778,17 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     valid.then_some(length)
 }
 unsafe fn object(context: Context) -> Value {
-    fw!(0x0c3b982c, unsafe extern "C" fn(Context) -> Value)(context)
+    fw!(
+        abi::F_QJS_NEW_OBJECT,
+        unsafe extern "C" fn(Context) -> Value
+    )(context)
 }
 unsafe fn define(context: Context, object: Value, name: &[u8], value: Value) -> bool {
     if value == EXCEPTION {
         return false;
     }
     fw!(
-        0x0c3c3c46,
+        abi::F_QJS_DEFINE_PROPERTY_VALUE_STR,
         unsafe extern "C" fn(Context, Value, *const u8, Value, i32) -> i32
     )(context, object, name.as_ptr(), value, 7)
         >= 0
@@ -829,7 +859,7 @@ unsafe fn event_object(context: Context, event: &Event) -> Value {
         string(context, &event.peer[..event.peer_len])
     );
     let buffer = fw!(
-        0x0c3e7674,
+        abi::F_QJS_NEW_ARRAY_BUFFER_COPY,
         unsafe extern "C" fn(Context, *const u8, usize) -> Value
     )(context, event.data.as_ptr(), event.data_len);
     property!(context, value, b"data\0", buffer);
