@@ -100,6 +100,24 @@ an install whose version did not become resident.
 Keeping the pack separate from the module means a wrong address has exactly one
 commit to revert.
 
+## When the shape differs, not just the address
+
+Two Firmware facts that an address-only abi module cannot express, both found on
+p67, so a port has to decide them in code rather than by substituting a number:
+
+- `F_FILE_WRITE(file, buf, len)` assumes a scalar write. p67 has no such
+  function: only `file_writev(file, iovec)` (`0xC1D2540`) and `nx_write`
+  (`0xC1D25F4`), which builds a one-element iovec and calls it. Adapting means
+  constructing an iovec, not finding another address.
+- `F_FS_PUTFILEP(file)` exists on p67 as a real one-argument release, but IDA
+  never marked it as a function (it sits as a `loc_`), so a symbol-table-driven
+  search misses it. Trust the reference-count decrement plus the list release,
+  not the function list.
+
+The general lesson: recover the *contract* (arguments, ownership, failure) for
+each binding, and note when a target cannot satisfy the current call shape. That
+is a module change with a review, not a pack edit.
+
 ## Traps that cost this session hours
 
 - **A same-`versionCode` install never applies.** The Supervisor stages
