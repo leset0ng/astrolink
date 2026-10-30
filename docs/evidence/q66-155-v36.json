@@ -1,0 +1,1108 @@
+{
+  "schema": 1,
+  "firmware": "xiaomi-band-11-4.100.155",
+  "module_version_code": 36,
+  "physical_radio_verified": false,
+  "artifacts": {
+    "dist/astrolink-0.1.0.canopus": {
+      "bytes": 98816,
+      "sha256": "601284c6a182b3bc62dd394033d4bdc77aafc32e1e5b5600163a6ab9b9d65741"
+    },
+    "build/xiaomi-band-11-4.100.155/astrolink.elf": {
+      "bytes": 94372,
+      "sha256": "4c21222f3a653217cffca61e9fa333e541bb47bf09298f3410df01282763445e"
+    },
+    "packages/astrolink/dist/canopus-astrolink-0.1.0.tgz": {
+      "bytes": 13828,
+      "sha256": "7854d2a9e640a8c2fa4a23a5732c46cc90e76294b1dae6bc33c870966e00b114"
+    },
+    "examples/quickapp/dist/astrolink-example-source.rpk": {
+      "bytes": 34611,
+      "sha256": "3915666a3b2d44023c62b8f32d874bf855eea04cb7e56998f9ae4d3e8d850016"
+    },
+    "examples/quickapp/dist/astrolink-example-bytecode.rpk": {
+      "bytes": 44486,
+      "sha256": "7a8dcae2d85433df591c5d0a4e6da456ed7639946a1bfa39eda1632154ef107b"
+    },
+    "examples/quickapp/dist/astrolink-probe-source.rpk": {
+      "bytes": 34700,
+      "sha256": "845aab0a1450cd0a4644d061db3d1a820cfb5577651a8f2b77c7e7c33327fe9f"
+    }
+  },
+  "native": {
+    "source": "/tmp/astrolink-v36-probe/summary.json",
+    "source_sha256": "c3785daae24ceea846bb2158d0a0529466a61bfe78322527565f070f4a866ada",
+    "module": {
+      "slot": 0,
+      "moduleId": "astrolink",
+      "version": 36,
+      "state": 13,
+      "lifecycleClass": 1,
+      "flags": 1,
+      "activationError": 0
+    },
+    "probe": {
+      "passed": true,
+      "checksPassed": 18,
+      "failures": [],
+      "completed": {
+        "sequence": 37,
+        "event": "complete",
+        "step": "18 项检查已完成",
+        "passed": 18
+      }
+    },
+    "events": [
+      {
+        "event": "page-init"
+      },
+      {
+        "sequence": 1,
+        "event": "start",
+        "step": "加载原生 Feature",
+        "passed": 0
+      },
+      {
+        "sequence": 2,
+        "event": "pass",
+        "step": "加载原生 Feature",
+        "passed": 1,
+        "elapsedMs": 0
+      },
+      {
+        "sequence": 3,
+        "event": "start",
+        "step": "读取设备能力",
+        "passed": 1
+      },
+      {
+        "event": "capabilities",
+        "supported": true,
+        "maxLinks": 1,
+        "maxServiceIdBytes": 6,
+        "maxAdvertisingDataBytes": 1
+      },
+      {
+        "sequence": 4,
+        "event": "pass",
+        "step": "读取设备能力",
+        "passed": 2,
+        "elapsedMs": 1
+      },
+      {
+        "sequence": 5,
+        "event": "start",
+        "step": "接受 6 字节服务名",
+        "passed": 2
+      },
+      {
+        "sequence": 6,
+        "event": "pass",
+        "step": "接受 6 字节服务名",
+        "passed": 3,
+        "elapsedMs": 1
+      },
+      {
+        "sequence": 7,
+        "event": "start",
+        "step": "关闭边界测试 Session",
+        "passed": 3
+      },
+      {
+        "sequence": 8,
+        "event": "pass",
+        "step": "关闭边界测试 Session",
+        "passed": 4,
+        "elapsedMs": 3
+      },
+      {
+        "sequence": 9,
+        "event": "start",
+        "step": "拒绝 7 字节服务名",
+        "passed": 4
+      },
+      {
+        "sequence": 10,
+        "event": "pass",
+        "step": "拒绝 7 字节服务名",
+        "passed": 5,
+        "elapsedMs": 1
+      },
+      {
+        "sequence": 11,
+        "event": "start",
+        "step": "创建 chat Session",
+        "passed": 5
+      },
+      {
+        "sequence": 12,
+        "event": "pass",
+        "step": "创建 chat Session",
+        "passed": 6,
+        "elapsedMs": 2
+      },
+      {
+        "sequence": 13,
+        "event": "start",
+        "step": "开始扫描",
+        "passed": 6
+      },
+      {
+        "sequence": 14,
+        "event": "pass",
+        "step": "开始扫描",
+        "passed": 7,
+        "elapsedMs": 5
+      },
+      {
+        "sequence": 15,
+        "event": "start",
+        "step": "停止扫描",
+        "passed": 7
+      },
+      {
+        "sequence": 16,
+        "event": "pass",
+        "step": "停止扫描",
+        "passed": 8,
+        "elapsedMs": 6
+      },
+      {
+        "sequence": 17,
+        "event": "start",
+        "step": "重复停止扫描",
+        "passed": 8
+      },
+      {
+        "sequence": 18,
+        "event": "pass",
+        "step": "重复停止扫描",
+        "passed": 9,
+        "elapsedMs": 6
+      },
+      {
+        "sequence": 19,
+        "event": "start",
+        "step": "开始广播 1 字节",
+        "passed": 9
+      },
+      {
+        "sequence": 20,
+        "event": "pass",
+        "step": "开始广播 1 字节",
+        "passed": 10,
+        "elapsedMs": 59
+      },
+      {
+        "sequence": 21,
+        "event": "start",
+        "step": "停止广播",
+        "passed": 10
+      },
+      {
+        "sequence": 22,
+        "event": "pass",
+        "step": "停止广播",
+        "passed": 11,
+        "elapsedMs": 15
+      },
+      {
+        "sequence": 23,
+        "event": "start",
+        "step": "重复停止广播",
+        "passed": 11
+      },
+      {
+        "sequence": 24,
+        "event": "pass",
+        "step": "重复停止广播",
+        "passed": 12,
+        "elapsedMs": 38
+      },
+      {
+        "sequence": 25,
+        "event": "start",
+        "step": "关闭 chat Session",
+        "passed": 12
+      },
+      {
+        "sequence": 26,
+        "event": "pass",
+        "step": "关闭 chat Session",
+        "passed": 13,
+        "elapsedMs": 10
+      },
+      {
+        "sequence": 27,
+        "event": "start",
+        "step": "重复关闭 Session",
+        "passed": 13
+      },
+      {
+        "sequence": 28,
+        "event": "pass",
+        "step": "重复关闭 Session",
+        "passed": 14,
+        "elapsedMs": 8
+      },
+      {
+        "sequence": 29,
+        "event": "start",
+        "step": "重建 Session 1/2",
+        "passed": 14
+      },
+      {
+        "sequence": 30,
+        "event": "pass",
+        "step": "重建 Session 1/2",
+        "passed": 15,
+        "elapsedMs": 3
+      },
+      {
+        "sequence": 31,
+        "event": "start",
+        "step": "释放 Session 1/2",
+        "passed": 15
+      },
+      {
+        "sequence": 32,
+        "event": "pass",
+        "step": "释放 Session 1/2",
+        "passed": 16,
+        "elapsedMs": 25
+      },
+      {
+        "sequence": 33,
+        "event": "start",
+        "step": "重建 Session 2/2",
+        "passed": 16
+      },
+      {
+        "sequence": 34,
+        "event": "pass",
+        "step": "重建 Session 2/2",
+        "passed": 17,
+        "elapsedMs": 4
+      },
+      {
+        "sequence": 35,
+        "event": "start",
+        "step": "释放 Session 2/2",
+        "passed": 17
+      },
+      {
+        "sequence": 36,
+        "event": "pass",
+        "step": "释放 Session 2/2",
+        "passed": 18,
+        "elapsedMs": 21
+      },
+      {
+        "sequence": 37,
+        "event": "complete",
+        "step": "18 项检查已完成",
+        "passed": 18
+      }
+    ]
+  },
+  "peers": {
+    "central": {
+      "source": "/tmp/astrolink-v36-peer-central.json",
+      "source_sha256": "6e46b57a61a3d5463ca2b0f7a6fba0e15293787c7d26d109ce58ee47cabdd25d",
+      "summary": {
+        "kind": "external-standard-le-peer",
+        "ok": true,
+        "physical_radio_verified": false,
+        "role": "central",
+        "service": "chat",
+        "spsm": 128,
+        "endpoint": "127.0.0.1:63579",
+        "script_sha256": "90a3ea61641bc4e9edefe9ff7c8da492218fcd0884e59f9d3b3ed314b5548b6d",
+        "le_connection_observed": true,
+        "hello_verified": true,
+        "host_queued_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "firmware_to_peer_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "byte_verified_example_response_sizes": [
+          511,
+          512
+        ],
+        "firmware_example_requests_echoed": 2,
+        "missing_firmware_sdu_sizes": [],
+        "outgoing_kframes_pending": 0,
+        "outgoing_acl_pending": 0,
+        "controller_acl_outstanding": 0,
+        "zero_one_receive_evidence": "HCI reception proves firmware-to-peer delivery; peer-to-firmware 0/1-byte app consumption requires QuickApp counters/logs",
+        "cleanup_errors": []
+      },
+      "events": [
+        {
+          "seconds": 0.001291,
+          "kind": "command_result",
+          "opcode": "0x0c03",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001377,
+          "kind": "command_result",
+          "opcode": "0x0c01",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001452,
+          "kind": "command_result",
+          "opcode": "0x2001",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001523,
+          "kind": "command_result",
+          "opcode": "0x1009",
+          "status": 0,
+          "returns": "010000eeffc0"
+        },
+        {
+          "seconds": 0.001591,
+          "kind": "command_result",
+          "opcode": "0x2002",
+          "status": 0,
+          "returns": "fb0008"
+        },
+        {
+          "seconds": 0.0016,
+          "kind": "controller_ready",
+          "own_address": "C0:FF:EE:00:00:01",
+          "acl_mtu": 251,
+          "acl_packets": 8,
+          "role": "central"
+        },
+        {
+          "seconds": 0.001704,
+          "kind": "command_result",
+          "opcode": "0x200b",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001768,
+          "kind": "command_result",
+          "opcode": "0x200c",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001773,
+          "kind": "ready_for_quickapp",
+          "action": "start advertising"
+        },
+        {
+          "seconds": 6.866019,
+          "kind": "astrolink_advertisement",
+          "peer": "2E:CC:FF:E1:C8:8B",
+          "address_type": 0,
+          "spsm": 128,
+          "service": "chat",
+          "data": "a1",
+          "rssi": -40,
+          "event_type": 0,
+          "connectable": true
+        },
+        {
+          "seconds": 6.866157,
+          "kind": "command_result",
+          "opcode": "0x200c",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 6.866255,
+          "kind": "command_result",
+          "opcode": "0x200d",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 6.867455,
+          "kind": "le_connected",
+          "handle": 2,
+          "role": 0,
+          "address_type": 0,
+          "peer": "2E:CC:FF:E1:C8:8B",
+          "enhanced": true
+        },
+        {
+          "seconds": 6.867482,
+          "kind": "l2cap_signal_tx",
+          "code": "0x14",
+          "ident": 1,
+          "data": "80004000000280001000"
+        },
+        {
+          "seconds": 6.873461,
+          "kind": "l2cap_signal_rx",
+          "code": "0x15",
+          "ident": 1,
+          "data": "44000002400005000000"
+        },
+        {
+          "seconds": 6.873492,
+          "kind": "coc_open",
+          "local_cid": 64,
+          "remote_cid": 68,
+          "local_receive_mtu": 512,
+          "local_receive_mps": 128,
+          "remote_receive_mtu": 512,
+          "remote_receive_mps": 64,
+          "initial_tx_credits": 5
+        },
+        {
+          "seconds": 6.873503,
+          "kind": "hello_tx",
+          "data": "010463686174"
+        },
+        {
+          "seconds": 6.876531,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 1,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.894821,
+          "kind": "hello_rx",
+          "data": "010463686174"
+        },
+        {
+          "seconds": 6.894835,
+          "kind": "astrolink_ready",
+          "service": "chat"
+        },
+        {
+          "seconds": 6.89486,
+          "kind": "sdu_tx_queued",
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "seconds": 6.894871,
+          "kind": "sdu_tx_queued",
+          "length": 1,
+          "sha256": "6922e93e3827642ce4b883c756b31abf80036649d3614bf5fcb3adda43b8ea32"
+        },
+        {
+          "seconds": 6.894903,
+          "kind": "sdu_tx_queued",
+          "length": 511,
+          "sha256": "5fb6b5271cb0511f9f98ec7d70723aadb66cdc6f7c689817ca55c56b15ad063d"
+        },
+        {
+          "seconds": 6.894929,
+          "kind": "sdu_tx_queued",
+          "length": 512,
+          "sha256": "bf8cc19e53ab48858970296c0faf564bba0273bdbc51ccc7ab7e484ce306a90a"
+        },
+        {
+          "seconds": 6.894936,
+          "kind": "ready_for_quickapp",
+          "action": "run Ping / boundary tests; send actual 0/1/511/512-byte SDUs",
+          "duration_seconds": 180.0
+        },
+        {
+          "seconds": 6.897793,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 2,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.904297,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 3,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.912381,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 4,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.920385,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 5,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.930062,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 6,
+          "data": "44000500"
+        },
+        {
+          "seconds": 6.934562,
+          "kind": "sdu_rx",
+          "length": 511,
+          "sha256": "95e15f0feb46c51e0b63f6bc55ce210d624363a45c94eb54b65637f16aac3c6c",
+          "data_hex": null
+        },
+        {
+          "seconds": 6.934572,
+          "kind": "example_response_verified",
+          "sequence": 10555393,
+          "length": 511
+        },
+        {
+          "seconds": 6.935859,
+          "kind": "l2cap_signal_tx",
+          "code": "0x16",
+          "ident": 2,
+          "data": "40000800"
+        },
+        {
+          "seconds": 6.936059,
+          "kind": "sdu_rx",
+          "length": 512,
+          "sha256": "9ee88afffadda88acb0de12750989e19c79bfbd158663d2a05ca1e977abf0bcc",
+          "data_hex": null
+        },
+        {
+          "seconds": 6.936074,
+          "kind": "example_response_verified",
+          "sequence": 10555394,
+          "length": 512
+        },
+        {
+          "seconds": 20.470345,
+          "kind": "sdu_rx",
+          "length": 32,
+          "sha256": "5ff48e330cabfc54c810a8c4b9fc48fa2dab46b10360345b776a332067abec47",
+          "data_hex": null
+        },
+        {
+          "seconds": 20.470381,
+          "kind": "sdu_tx_queued",
+          "length": 32,
+          "sha256": "1d105975ebb11d714a6e58b13be3f7f132b34dcc08dfe8660e9673e3b8c191bc"
+        },
+        {
+          "seconds": 20.470403,
+          "kind": "example_request_echoed",
+          "sequence": 1,
+          "length": 32
+        },
+        {
+          "seconds": 20.517802,
+          "kind": "l2cap_signal_tx",
+          "code": "0x16",
+          "ident": 3,
+          "data": "40000800"
+        },
+        {
+          "seconds": 20.517826,
+          "kind": "sdu_rx",
+          "length": 512,
+          "sha256": "a6e0bff859040320b75363d95e9d9b687052a3418a27ba5020802aa88775aeaa",
+          "data_hex": null
+        },
+        {
+          "seconds": 20.517839,
+          "kind": "sdu_tx_queued",
+          "length": 512,
+          "sha256": "2fe87c2376cea01f790358271f4964cf12b76192b82ce56d46fec6ac1fe802b8"
+        },
+        {
+          "seconds": 20.517846,
+          "kind": "example_request_echoed",
+          "sequence": 2,
+          "length": 512
+        },
+        {
+          "seconds": 20.535678,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 7,
+          "data": "44000500"
+        },
+        {
+          "seconds": 20.543727,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 8,
+          "data": "44000500"
+        },
+        {
+          "seconds": 20.569854,
+          "kind": "sdu_rx",
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "data_hex": ""
+        },
+        {
+          "seconds": 20.591091,
+          "kind": "sdu_rx",
+          "length": 1,
+          "sha256": "6922e93e3827642ce4b883c756b31abf80036649d3614bf5fcb3adda43b8ea32",
+          "data_hex": "a5"
+        },
+        {
+          "seconds": 20.591125,
+          "kind": "l2cap_signal_tx",
+          "code": "0x06",
+          "ident": 4,
+          "data": "44004000"
+        },
+        {
+          "seconds": 20.594195,
+          "kind": "l2cap_signal_rx",
+          "code": "0x07",
+          "ident": 4,
+          "data": "44004000"
+        },
+        {
+          "seconds": 20.594206,
+          "kind": "coc_disconnected",
+          "initiator": "test-host"
+        },
+        {
+          "seconds": 20.594315,
+          "kind": "command_result",
+          "opcode": "0x0406",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 20.594343,
+          "kind": "le_disconnected",
+          "reason": 22
+        },
+        {
+          "seconds": 20.594363,
+          "kind": "cleanup",
+          "errors": []
+        }
+      ]
+    },
+    "peripheral": {
+      "source": "/tmp/astrolink-v36-peer-peripheral.json",
+      "source_sha256": "75227933622ad21d81169c5a2b5a14360dd5fa437d814e3ebc5ffc29f396a0dc",
+      "summary": {
+        "kind": "external-standard-le-peer",
+        "ok": true,
+        "physical_radio_verified": false,
+        "role": "peripheral",
+        "service": "chat",
+        "spsm": 128,
+        "endpoint": "127.0.0.1:63579",
+        "script_sha256": "90a3ea61641bc4e9edefe9ff7c8da492218fcd0884e59f9d3b3ed314b5548b6d",
+        "le_connection_observed": true,
+        "hello_verified": true,
+        "host_queued_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "firmware_to_peer_sdu_sizes": [
+          0,
+          1,
+          32,
+          511,
+          512
+        ],
+        "byte_verified_example_response_sizes": [
+          511,
+          512
+        ],
+        "firmware_example_requests_echoed": 2,
+        "missing_firmware_sdu_sizes": [],
+        "outgoing_kframes_pending": 0,
+        "outgoing_acl_pending": 0,
+        "controller_acl_outstanding": 0,
+        "zero_one_receive_evidence": "HCI reception proves firmware-to-peer delivery; peer-to-firmware 0/1-byte app consumption requires QuickApp counters/logs",
+        "cleanup_errors": []
+      },
+      "events": [
+        {
+          "seconds": 0.001308,
+          "kind": "command_result",
+          "opcode": "0x0c03",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001403,
+          "kind": "command_result",
+          "opcode": "0x0c01",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001506,
+          "kind": "command_result",
+          "opcode": "0x2001",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001592,
+          "kind": "command_result",
+          "opcode": "0x1009",
+          "status": 0,
+          "returns": "010000eeffc0"
+        },
+        {
+          "seconds": 0.001665,
+          "kind": "command_result",
+          "opcode": "0x2002",
+          "status": 0,
+          "returns": "fb0008"
+        },
+        {
+          "seconds": 0.001677,
+          "kind": "controller_ready",
+          "own_address": "C0:FF:EE:00:00:01",
+          "acl_mtu": 251,
+          "acl_packets": 8,
+          "role": "peripheral"
+        },
+        {
+          "seconds": 0.001764,
+          "kind": "command_result",
+          "opcode": "0x2006",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001874,
+          "kind": "command_result",
+          "opcode": "0x2008",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001967,
+          "kind": "command_result",
+          "opcode": "0x200a",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 0.001978,
+          "kind": "ready_for_quickapp",
+          "action": "start scan, select this peer and connect",
+          "own_address": "C0:FF:EE:00:00:01",
+          "spsm": 128
+        },
+        {
+          "seconds": 30.904351,
+          "kind": "le_connected",
+          "handle": 2,
+          "role": 1,
+          "address_type": 0,
+          "peer": "2E:CC:FF:E1:C8:8B",
+          "enhanced": true
+        },
+        {
+          "seconds": 30.911593,
+          "kind": "l2cap_signal_rx",
+          "code": "0x14",
+          "ident": 1,
+          "data": "80004500000240000500"
+        },
+        {
+          "seconds": 30.911619,
+          "kind": "l2cap_signal_tx",
+          "code": "0x15",
+          "ident": 1,
+          "data": "40000002800010000000"
+        },
+        {
+          "seconds": 30.911639,
+          "kind": "coc_open",
+          "local_cid": 64,
+          "remote_cid": 69,
+          "local_receive_mtu": 512,
+          "local_receive_mps": 128,
+          "remote_receive_mtu": 512,
+          "remote_receive_mps": 64,
+          "initial_tx_credits": 5
+        },
+        {
+          "seconds": 30.911661,
+          "kind": "hello_tx",
+          "data": "010463686174"
+        },
+        {
+          "seconds": 30.912185,
+          "kind": "unhandled_l2cap",
+          "cid": 4,
+          "length": 3
+        },
+        {
+          "seconds": 30.917523,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 2,
+          "data": "45000500"
+        },
+        {
+          "seconds": 30.954479,
+          "kind": "hello_rx",
+          "data": "010463686174"
+        },
+        {
+          "seconds": 30.954492,
+          "kind": "astrolink_ready",
+          "service": "chat"
+        },
+        {
+          "seconds": 30.954513,
+          "kind": "sdu_tx_queued",
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "seconds": 30.954523,
+          "kind": "sdu_tx_queued",
+          "length": 1,
+          "sha256": "6922e93e3827642ce4b883c756b31abf80036649d3614bf5fcb3adda43b8ea32"
+        },
+        {
+          "seconds": 30.954552,
+          "kind": "sdu_tx_queued",
+          "length": 511,
+          "sha256": "5fb6b5271cb0511f9f98ec7d70723aadb66cdc6f7c689817ca55c56b15ad063d"
+        },
+        {
+          "seconds": 30.954575,
+          "kind": "sdu_tx_queued",
+          "length": 512,
+          "sha256": "bf8cc19e53ab48858970296c0faf564bba0273bdbc51ccc7ab7e484ce306a90a"
+        },
+        {
+          "seconds": 30.954581,
+          "kind": "ready_for_quickapp",
+          "action": "run Ping / boundary tests; send actual 0/1/511/512-byte SDUs",
+          "duration_seconds": 180.0
+        },
+        {
+          "seconds": 30.957673,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 3,
+          "data": "45000500"
+        },
+        {
+          "seconds": 30.963041,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 4,
+          "data": "45000500"
+        },
+        {
+          "seconds": 30.972086,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 5,
+          "data": "45000500"
+        },
+        {
+          "seconds": 30.97998,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 6,
+          "data": "45000500"
+        },
+        {
+          "seconds": 30.989076,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 7,
+          "data": "45000500"
+        },
+        {
+          "seconds": 31.001206,
+          "kind": "sdu_rx",
+          "length": 511,
+          "sha256": "95e15f0feb46c51e0b63f6bc55ce210d624363a45c94eb54b65637f16aac3c6c",
+          "data_hex": null
+        },
+        {
+          "seconds": 31.001215,
+          "kind": "example_response_verified",
+          "sequence": 10555393,
+          "length": 511
+        },
+        {
+          "seconds": 31.002841,
+          "kind": "l2cap_signal_tx",
+          "code": "0x16",
+          "ident": 1,
+          "data": "40000800"
+        },
+        {
+          "seconds": 31.003052,
+          "kind": "sdu_rx",
+          "length": 512,
+          "sha256": "9ee88afffadda88acb0de12750989e19c79bfbd158663d2a05ca1e977abf0bcc",
+          "data_hex": null
+        },
+        {
+          "seconds": 31.00306,
+          "kind": "example_response_verified",
+          "sequence": 10555394,
+          "length": 512
+        },
+        {
+          "seconds": 44.650319,
+          "kind": "sdu_rx",
+          "length": 32,
+          "sha256": "c5730b6dfe83afa598fb0195a82014cfe002337aaecfcc360db2086beeb78b32",
+          "data_hex": null
+        },
+        {
+          "seconds": 44.650345,
+          "kind": "sdu_tx_queued",
+          "length": 32,
+          "sha256": "f54f214e54c3c821b609ffb986a112b665251f7c32470046707df31b795b789b"
+        },
+        {
+          "seconds": 44.650358,
+          "kind": "example_request_echoed",
+          "sequence": 3,
+          "length": 32
+        },
+        {
+          "seconds": 44.715792,
+          "kind": "l2cap_signal_tx",
+          "code": "0x16",
+          "ident": 2,
+          "data": "40000800"
+        },
+        {
+          "seconds": 44.715811,
+          "kind": "sdu_rx",
+          "length": 512,
+          "sha256": "c2818c1c8d2dd679c2c67ac1b29fccf534365a3c38e7486cd38e34dda2d9d6cd",
+          "data_hex": null
+        },
+        {
+          "seconds": 44.715821,
+          "kind": "sdu_tx_queued",
+          "length": 512,
+          "sha256": "058dec8fe0a5a24de19ce3a9ab76eb8b7757ca161f125e6b0c523243425bbaa8"
+        },
+        {
+          "seconds": 44.715827,
+          "kind": "example_request_echoed",
+          "sequence": 4,
+          "length": 512
+        },
+        {
+          "seconds": 44.73265,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 8,
+          "data": "45000500"
+        },
+        {
+          "seconds": 44.740956,
+          "kind": "l2cap_signal_rx",
+          "code": "0x16",
+          "ident": 9,
+          "data": "45000500"
+        },
+        {
+          "seconds": 44.7656,
+          "kind": "sdu_rx",
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "data_hex": ""
+        },
+        {
+          "seconds": 44.800889,
+          "kind": "sdu_rx",
+          "length": 1,
+          "sha256": "6922e93e3827642ce4b883c756b31abf80036649d3614bf5fcb3adda43b8ea32",
+          "data_hex": "a5"
+        },
+        {
+          "seconds": 44.800925,
+          "kind": "l2cap_signal_tx",
+          "code": "0x06",
+          "ident": 3,
+          "data": "45004000"
+        },
+        {
+          "seconds": 44.803753,
+          "kind": "l2cap_signal_rx",
+          "code": "0x07",
+          "ident": 3,
+          "data": "45004000"
+        },
+        {
+          "seconds": 44.803762,
+          "kind": "coc_disconnected",
+          "initiator": "test-host"
+        },
+        {
+          "seconds": 44.803867,
+          "kind": "command_result",
+          "opcode": "0x0406",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 44.803902,
+          "kind": "le_disconnected",
+          "reason": 22
+        },
+        {
+          "seconds": 44.803991,
+          "kind": "command_result",
+          "opcode": "0x200a",
+          "status": 0,
+          "returns": ""
+        },
+        {
+          "seconds": 44.804008,
+          "kind": "cleanup",
+          "errors": []
+        }
+      ]
+    }
+  },
+  "quickapp_incoming_log": [
+    "201088be [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 连接成功 · 上限 512 B",
+    "20108969 [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 广播已开始 · 等待另一台设备",
+    "20108a30 [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 收到 0 B 自定义消息",
+    "20108a87 [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 收到 1 B 自定义消息",
+    "20108ade [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 已回包 511 B",
+    "20108b2a [12/31 08:01:23] [369] [  INFO] [ap] [quickapp] [Astrolink] 已回包 512 B",
+    "2010c1dd [12/31 08:01:36] [369] [  INFO] [ap] [quickapp] [Astrolink] 二进制逐字节校验通过",
+    "2010c238 [12/31 08:01:36] [369] [  INFO] [ap] [quickapp] [Astrolink] 512 B 最大消息回包通过",
+    "2010c293 [12/31 08:01:36] [369] [  INFO] [ap] [quickapp] [Astrolink] 0 B / 1 B 原始消息已提交",
+    "2010c431 [12/31 08:01:36] [369] [  INFO] [ap] [quickapp] [Astrolink] 二进制、最大长度、超长拒绝均通过",
+    "2010d0f2 [12/31 08:01:36] [369] [  INFO] [ap] [quickapp] [Astrolink] 连接已断开 · BACKEND",
+    "2010db25 [12/31 08:00:51] [369] [  INFO] [ap] [quickapp] [Astrolink] Session 已创建 · chat"
+  ]
+}

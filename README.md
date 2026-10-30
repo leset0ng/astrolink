@@ -1,71 +1,151 @@
 # Astrolink
 
-A standalone `no_std` Rust module for Canopus, generated from the official Rust
-template. The initial scaffold uses Supervisor services and has no application
-logic yet.
+Astrolink is a resident Canopus module that exposes peer BLE discovery and
+bidirectional LE L2CAP Credit Based Connections to QuickApps. The first device
+backend targets **Xiaomi Smart Band 11, firmware 4.100.155** exactly. Other
+firmware versions require separate ABI recovery and target records.
 
-## Layout
+The module uses the existing firmware Bluetooth host. It registers independent
+scan/advertisement handles and dynamic LE SPSMs. It does not replace the HCI
+receiver, the phone connection, the Bluetooth adapter, or pairing callbacks.
 
-```text
-rust/
-├── Canopus-Private/       # SDK and CLI checkout
-└── astrolink/
-    ├── Canopus.toml       # Module metadata and Canopus build configuration
-    ├── Cargo.toml        # Independent Rust workspace and SDK dependencies
-    └── src/
-        └── lib.rs        # Module descriptor and lifecycle callbacks
+## Validated build
+
+Version code **36** passes the real Q66 `.155` native lifecycle probe and both
+LE CoC connection directions in the isolated Mirage environment. The example
+exercised complete 0/1/511/512-byte SDUs, matching service HELLO, binary
+request/reply checks, oversize rejection and CoC/LE cleanup. The final native
+runs use the firmware Bluelet host and a standard external LE peer.
+See `docs/native-validation.md` for artifacts, evidence and remaining hardware
+acceptance limits.
+
+Installable outputs:
+
+- Native module: `dist/astrolink-0.1.0.canopus`.
+- npm package: `packages/astrolink/dist/canopus-astrolink-0.1.0.tgz`.
+- Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
+  `astrolink-example-bytecode.rpk` in that directory.
+- Standalone lifecycle probe: `examples/quickapp/dist/astrolink-probe-source.rpk`.
+
+```sh
+npm install /absolute/path/to/canopus-astrolink-0.1.0.tgz
 ```
 
-SDK dependencies use paths relative to this project. Keep both directories next
-to each other, or update the dependency paths and `CANOPUS_ROOT` when moving them.
+## QuickApp API
 
-## Build and package
+The TypeScript package `@canopus/astrolink` wraps the firmware native Feature
+`canopus.astrolink`. Declare the Feature in the application's manifest:
 
-Prerequisites: Rust with the `thumbv8m.main-none-eabi` target, Clang, LLD, and
-`llvm-ar`. On macOS, install LLVM and LLD with `brew install llvm lld`.
+```json
+{"features":[{"name":"canopus.astrolink"}]}
+```
 
-Run from this directory:
+The package provides Session and Link objects, cancellable subscriptions, and
+Promises for asynchronous operations. The example under `examples/quickapp/`
+shows discovery, advertising, incoming/outgoing connections, binary Ping/echo,
+message boundaries and cleanup. See the package's README for installation and
+its generated type declarations for the full API.
+
+```ts
+import { loadAstrolink } from '@canopus/astrolink'
+
+const astrolink = loadAstrolink()
+const session = astrolink.createSession({ serviceId: 'chat' })
+session.onConnection(link => {
+  link.onData(data => console.log(new Uint8Array(data)))
+})
+session.onAdvertisement(async peer => {
+  const link = await session.connect(peer.peerId)
+  link.onData(data => console.log(new Uint8Array(data)))
+  await link.send(new Uint8Array([1, 2, 3]))
+})
+await session.startAdvertising({ data: new Uint8Array([1]) })
+await session.startScan()
+// On page/application shutdown:
+// await session.close()
+```
+
+Register data listeners on each Link before sending application data. The
+example adds its own request/reply encoding solely to verify delivery; the
+native module adds no application ACK or message-fragment protocol.
+
+## Contract and limits
+
+- `serviceId` is required and matches literal UTF-8 bytes, up to **6 bytes**.
+- One legacy advertising packet carries a fixed 128-bit Astrolink service UUID,
+  version, dynamic SPSM, service name and up to **1 byte** of user data. Service
+  names are not converted into UUIDs. Overlength input is rejected.
+- Device connection capacity is **1 Link**. The core uses a Link table and
+  independent queues, and host tests also run with two Links.
+- One `send` is one complete CoC SDU, including empty SDUs. Sending is limited
+  to the smaller of the remote receive MTU and **512 bytes**. Local receive
+  MTU is independently configured as 512 bytes.
+- Each Link has four pending sends and four buffered received messages.
+  Transmit queue saturation returns `BUSY`; receive overflow closes only that
+  Link with `RECEIVE_OVERFLOW`.
+- `send` resolves when the firmware host takes responsibility for the SDU.
+  It does not assert that remote JavaScript or the remote application consumed it.
+- Scan reports are filtered by service and deduplicated by peer/data/SPSM;
+  `allowDuplicates` delivers repeated matching reports. The peer cache has eight
+  entries. `peerId` preserves the address and address type as an opaque string.
+- Connections have a 15-second establishment/HELLO deadline. Both peers exchange
+  version and service name before the Link is exposed to JavaScript.
+- Stopping advertising rejects new incoming channels while established Links
+  continue. Controller termination of connectable advertising releases its set
+  without revoking listener intent for the peer's ensuing CoC request. Explicit
+  stop or Session close revokes admission even after that automatic termination.
+  Closing a Session closes its own resources. Destroying the owning QuickApp
+  context cancels its work and releases JS references on its owner task.
+- The native Feature and callbacks remain resident until reboot. Disabling or
+  replacing the module requires reboot; closing a Session does not unload code.
+
+## Build
+
+Keep this repository next to `Canopus-Private`. Install Rust's
+`thumbv8m.main-none-eabi` target and LLVM/LLD. Use the SDK revision containing the
+Astrolink exact-target allowlist and Rust linking fixes described in
+`docs/build-verification.md`.
 
 ```sh
 rustup target add thumbv8m.main-none-eabi
 export CANOPUS_ROOT="$(cd ../Canopus-Private && pwd)"
-
-# Build the local Canopus CLI if needed.
+export PATH="/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$PATH"
 cargo build --manifest-path "$CANOPUS_ROOT/Cargo.toml" -p canopus-cli
-
-# On macOS, make Homebrew LLVM and LLD available.
-# export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
-
-"$CANOPUS_ROOT/target/debug/canopus" build
+"$CANOPUS_ROOT/target/debug/canopus" build --target xiaomi-band-11-4.100.155
 "$CANOPUS_ROOT/target/debug/canopus" package
-"$CANOPUS_ROOT/target/debug/canopus" package verify dist/astrolink-0.1.0.canopus
 ```
 
-`canopus build` configures the target identity, device feature, Cortex-M33 flags,
-abort-on-panic behavior, C constructor shim, linking, and ELF verification. Use it
-for device builds. Build outputs go to `build/`; installation packages go to
-`dist/`. Keep `Cargo.lock` in version control for reproducible dependency resolution.
-
-The initial module is `portable`: one ELF can run across supported Band 11
-firmware versions. Band 10 Pro requires a target-bound configuration with exact
-firmware IDs in `Canopus.toml`.
-
-## Development
-
-`src/lib.rs` exposes the module descriptor and these callbacks:
-
-- `canopus_mod_prepare`: initialize module state.
-- `activate`: start module work; currently writes `astrolink active` to the log.
-- `deactivate`: stop active work before teardown.
-- `canopus_mod_stop`: release resources before unloading.
-- `query`: publish status; currently writes the template status marker `0x4D4F4455`.
-
-Add business logic as Rust modules under `src/` and call it from these callbacks.
-Keep module ID and version consistent between `Canopus.toml`, `Cargo.toml`, and
-the descriptor in `src/lib.rs`.
-
-Check Rust formatting with:
+Device ELF output is under `build/xiaomi-band-11-4.100.155/`; installation
+packages are under `dist/`. Verify the resulting `.canopus` using
+`canopus package verify PATH` before installing it through the companion API.
+After activation, reopen a QuickApp so its fresh Feature registry includes
+Astrolink.
 
 ```sh
+cargo test
+cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+## Implementation and evidence
+
+- `src/core.rs`: allocation-free Session/Link state, bounded queues, connection
+  handshake, timeout, resource state and generation-safe routing.
+- `src/protocol.rs`: standard legacy advertisement and HELLO formats.
+- `src/backend/`: exact-target GAP and Bluelet CoC ABI, owner-task submission and
+  explicit firmware-buffer ownership.
+- `src/qjs/`: per-application Feature registration, native binary argument
+  handling, QJS task dispatch and context destruction.
+- `src/runtime.rs`: asynchronous operation completion and cross-task integration.
+- `docs/ble-abi.md`, `docs/qjs-abi.md`: recovered ABI and ownership evidence.
+- `docs/simulator-validation.md`: reproducible isolated Mirage environment and
+  actual observations.
+
+Host tests and emulator tests do not establish two-device radio behavior. The
+isolated QEMU worktree implements standard LE connection creation, ACL routing,
+disconnect/reconnect and Classic coexistence; its 19 controller regressions pass
+(see `docs/qemu-le-validation.md`). On top of that controller, the native module
+and example pass incoming and outgoing CoC/HELLO/SDU integration, with actual
+QuickApp binary-consumption logs. Two physical devices are still required for
+radio acceptance, phone/Audio coexistence, throughput, heap stability and
+screen-off testing. See `docs/native-validation.md` for the exact tested scope.

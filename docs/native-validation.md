@@ -238,7 +238,13 @@ SDUs of 0/1/32/511/512 bytes, byte-verified 511/512-byte responses, all outgoing
 queues drained, and successful CoC/LE cleanup. No debugger was attached during
 these v36 runs. The second run reuses the same live QuickApp Session after the
 first peer's disconnect, covering channel retirement and reconnect with a new
-CID.
+CID. After both runs, `/tmp/astrolink-v36-probe/summary.json` records all 18
+native lifecycle checks passing again: start/stop scan 5/6 ms, start/stop
+advertising 59/15 ms, repeated operations and Session releases all within 38 ms.
+This also exercises destroying the example context with active scan/listener
+resources before the probe starts. Selected actual events, peer summaries,
+QuickApp consumption logs and final artifact SHA-256 values are archived in
+`evidence/q66-155-v36.json`; full packet captures remain at the paths above.
 
 The incoming run's actual QuickApp log is
 `/tmp/astrolink-v36-incoming-live/guest-logs/ram-syslog.log`: it records connection,

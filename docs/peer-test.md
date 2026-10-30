@@ -13,6 +13,16 @@ success alone never satisfies this script's connection requirement. A run needs
 an actual LE Connection Complete or LE Enhanced Connection Complete event with
 the expected role and selected peer identity.
 
+## Recorded integration
+
+Module version 36 targets exact Q66 `4.100.155` and passes incoming and outgoing
+CoC over the isolated Mirage controller model. Each role records LE establishment,
+CoC, matching HELLO, 0/1/511/512-byte firmware SDUs, verified 511/512-byte replies
+and successful cleanup. The actual example also records receipt of empty and
+one-byte SDUs. `native-validation.md` contains exact artifacts and regressions.
+These are simulated host/controller integration results; RF, phone/Audio
+coexistence and hardware stability remain separate physical-device work.
+
 ## Endpoint ownership and setup
 
 Only one external host can own the controller endpoint. Finish the companion
@@ -156,11 +166,12 @@ nonzero. `host_queued_sdu_sizes` describes requests queued by this host;
 `firmware_to_peer_sdu_sizes` describes actual complete SDUs received from the
 firmware. These fields deliberately state different observations.
 
-No live run has been performed by the script's implementation task: the
-simulator endpoint remains owned by the integration task. A successful future
-run validates firmware protocol integration over the tested controller model.
-It does not establish physical RF range/timing, hardware buffer limits, phone
-or Audio coexistence, power behavior, or two-physical-device acceptance.
+The implementation's first live integration runs are now recorded in
+`native-validation.md`, including both successful v36 roles and earlier failures.
+A successful run validates firmware protocol integration over the tested
+controller model. It does not establish physical RF range/timing, hardware
+buffer limits, phone or Audio coexistence, power behavior, or
+two-physical-device acceptance.
 
 Sources checked on 2026-10-29:
 
