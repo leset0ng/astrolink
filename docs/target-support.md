@@ -65,9 +65,12 @@ resident bytes and 1,244 relocations, which is expected: one code image,
 different addresses. The 18-check native lifecycle probe passes on the Q66
 `.155` device (`docs/native-validation.md`) and on the Q66 `.179` device.
 
-`.139` is adapted but not probed: its device never brought the Supervisor up in
-this session, so no device result is claimed for it. The per-target offsets it
-carries are still evidenced statically (`docs/loop-abi.md`).
+`.139` is adapted but not probed. Its own loader pack is still
+`STATIC_TEST_CANDIDATE` / `NOT_PROBED` (`targets/xiaomi-band-11-4.100.139/loader`),
+and in Mirage its Supervisor never answered on either boot: the installer reports
+`Run completed` and nothing serves the companion channel. `.155` and `.179` do
+answer, so this is the `.139` loader, not an Astrolink ABI result. Nothing about
+it is claimed here; its offsets are evidenced statically in `docs/loop-abi.md`.
 
 Device findings worth keeping, so they are not rediscovered:
 
