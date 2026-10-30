@@ -19,7 +19,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | discovery | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below); 10 of 47 bindings recovered, layout measured |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | recovered 41/47, blocked | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below). 41 of 47 firmware bindings have evidenced addresses; the module cannot be built until the four open QuickJS entries and two call-shape changes are settled |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
@@ -53,6 +53,34 @@ So the 40 remaining bindings have to be found on that image with local evidence
 (producer/consumer, `__FILE__` literals, the `[FEATURE]` and `[bluelet]` format
 strings), not transferred. Filling them from cross-line scores would put
 plausible wrong addresses into a pack that is supposed to prevent exactly that.
+
+## What stops the P67 module
+
+The pack now carries 41 of the 47 firmware bindings, every one with
+producer/consumer evidence, plus the structures the module needs
+(`evidence/p67-astrolink-coverage.md` §7/7b). Four things still stand between that
+pack and a buildable `src/abi/xiaomi-band-10-pro-3.101.043.rs`:
+
+- `qjs_new_string_len`: the allocation half is known (`len + 17` through the
+  runtime malloc hook at `rt+16`/`+8`, refcount `+0`, length `+4`, hash `+8`, NUL
+  at `+16+len`), but not the wrapper that turns that storage into a tag `-7`
+  value. `0xC278140` interns an atom instead.
+- `qjs_to_cstring_len2`: no candidate in the 340-380 byte range satisfies
+  "allocate `len+1`, copy, NUL-terminate, return the raw pointer"; the one size
+  match is a `StringBuffer` helper.
+- The array-buffer trio (`new_array_buffer_copy`, `get_array_buffer`,
+  `get_typed_array_buffer`): their class ids are built at runtime. The
+  `ArrayBuffer`/`Uint8Array` names live in a name blob that no pointer in the
+  image references, so ids cannot be read statically. `.155`'s `19` is plausibly
+  the same, but the pack policy is no address without evidence.
+- Two call shapes must change on the module side, deliberately: `F_FILE_WRITE`
+  has to become the writev form (`0xC1D2540`, or `nx_write 0xC1D2640`), and
+  `define_property_value_str` is inlined here, so the module must compose atom
+  create (`0xC294DCC`) + define + atom release (`0xC2780B0`) itself.
+
+Getting the rest needs either a runtime check on a device (the class ids) or a
+pass that identifies the runtime's class registration; neither is a guess this
+pack should contain.
 
 ## What "recovered" requires
 
