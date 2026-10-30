@@ -1,4 +1,4 @@
-//! Q66 .155 Feature/QJS bridge. Only `device` links the exact firmware ABI.
+//! Feature/QJS bridge. Only `device` links the exact firmware ABI.
 //! All Adapter callbacks must serialize their own engine access; none may call
 //! JavaScript. `notify` is safe from Bluetooth tasks and schedules a JS drain.
 
@@ -94,4 +94,8 @@ pub(crate) fn notify(_: u32) {}
 #[cfg(feature = "device")]
 mod feature;
 #[cfg(feature = "device")]
-pub(crate) use feature::{install, notify, trace};
+mod js;
+#[cfg(feature = "device")]
+pub(crate) use feature::{install, notify};
+#[cfg(feature = "device")]
+pub(crate) use js::trace;
