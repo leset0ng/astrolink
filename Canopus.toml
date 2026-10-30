@@ -3,7 +3,7 @@ schema = 1
 [module]
 id = "astrolink"
 version = "0.1.0"
-version_code = 32
+version_code = 33
 kind = "target"
 language = "rust"
 lifecycle = "resident-after-activation"

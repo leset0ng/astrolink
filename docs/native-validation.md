@@ -103,5 +103,37 @@ GAP dispatch alone does not fix JS notification. A proper cross-task-group wake
 must retain the target wake resource and its lifetime; polling or suppressing
 the assertion would not satisfy the event-delivery contract.
 
+## v33: fd-independent JS wake and remaining scan-stop failure
+
+ELF SHA-256: `59dc0c18495ad2fff64cfce7189e0f3f4933562046da3c6740d5fc27954dc925`.
+Package size 97,792 bytes, resident size 50,013 bytes, 1,239 relocations.
+
+The binding now initializes its own async on the QJS owner loop and duplicates
+the loop's pipe write endpoint into an owned 32-byte kernel file. Producers use
+file_write with the same libuv busy/pending atomic protocol, avoiding a foreign
+numeric descriptor lookup. Feature destruction withdraws the endpoint under
+the producer guard, then uv_close releases it on the owner loop. Independent
+static review confirmed the pipe's one-byte writes, nonblocking duplicate,
+pending offsets, and shutdown close-callback drain.
+
+The first native run (`/tmp/astrolink-v33-probe`) successfully completed start
+scan, stop scan, and repeated stop (9 preliminary checks), with no wake
+assertion or unexpected companion disconnection. However its JS task entered
+background after automatic screen-off and timers paused; stop completion took
+21.6 seconds. This is insufficient for operation-deadline acceptance.
+
+The probe now uses system.brightness.setKeepScreenOn during the run and restores
+normal screen behavior on finish/destruction. A foreground run
+(`/tmp/astrolink-v33-awake-probe`) passed seven checks including start scan in
+3.255 seconds, then correctly failed stop scan after 10 seconds and cleanup
+after another 10 seconds. The companion stayed connected until intentional
+harness disconnect. No advertising or CoC pass is inferred.
+
+A live entry/return breakpoint on scan_stop `0x0C46B730` confirmed a valid
+shared client and scan handle and a return value of 0. The remaining issue is
+after accepted stop submission, before its completion reaches the JS request;
+it is not a synchronous socket-send hang. Runtime stop-event semantics remain
+under investigation.
+
 The corrected notification bridge and complete CoC data path still require
 runtime validation. Host tests and controller regressions are separate gates.

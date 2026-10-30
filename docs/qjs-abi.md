@@ -109,31 +109,49 @@ A reused slot receives a fresh nonwrapping token and drops old work.
 
 ## Owner-task dispatch
 
-The existing Feature manager queue is the dispatch mechanism:
+The module owns a persistent 64-byte libuv async handle for each JS owner.
+It initializes the handle on that JS task, using the loop read from the stock
+manager's async pointer at manager+60, then handle+4. Its async callback drains
+the module's existing bounded native event queue on the JS thread. No new
+polling loop, manager deque copy, or replacement of stock callbacks is involved.
 
-- `0x0C491CD0`: enqueue a copied 24-byte descriptor under the manager's mutex;
-  call `uv_async_send` (`0x0C3F5700`) on manager+60 after releasing it.
-- `0x0C49296E`: libuv async callback invokes the manager drain with active=1.
-- `0x0C4928B0`: swap the queue under mutex, then invoke callbacks outside it.
-- `0x0C49794E`: manager destructor invokes the same drain with active=0.
+The stock Feature manager post at `0x0C491CD0` enqueues a copied Task24 under
+its mutex, then calls fd-based `uv_async_send` on its async handle. Actual v32
+execution proved that invoking it from `miwear_bluetooth` resolves JS wake fd
+85 in the wrong task group's file table: the first failure was EBADF at
+`0x0C3F5758` (`async.c:213`), with return address `0x0C491DA7`. Therefore it
+is not the cross-task-group notification mechanism used by this binding.
 
-The descriptor is `{ pointer reference; pointer callback; pointer user;
-pointer reserved; uint8_t simple; uint8_t padding[7]; }`, size 24 on ARM.
-For simple=0 the dispatcher calls `callback(int active, void *user)`; for
-simple=1 it calls a single-argument callback. The optional reference can be
-null (`0x0C4928A4` checks before release). The binding sets reference=0 and
-uses its integer owner generation as user data, so cancellation does not need
-a live Feature instance or JS object. Descriptors are copied before enqueue
-returns; stack storage is therefore valid for the enqueue call.
+Instead, while still on the JS owner, the binding retains the loop's pipe
+write endpoint (loop+316) with `fs_getfilep`, duplicates it into a zeroed,
+8-byte-aligned 32-byte owned file with `file_dup3`, and releases the source
+reference. Producers use `file_write` on that owned file, independent of their
+numeric fd table. This target uses a pipe and one-byte writes, not eventfd.
 
-`qjs::notify(owner)` coalesces notifications to one queued drain per owner.
-It holds the binding mutex through enqueue, ensuring onDestroy cannot remove
-and free the manager during a post. The core/runtime lock must be released
-before calling notify. Cancellation callbacks never access JavaScript. A
-normal drain consumes at most 16 events in one turn and schedules another turn
-if needed. No timer, file polling, UI heartbeat, or application virtual-call
-ABI is used for message delivery. The separate module deadline timer may still
-be used by the core for connection timeouts.
+| VA | Exact operation |
+| --- | --- |
+| `0x0C332C90` | `int fs_getfilep(int fd, file **out)`, retains a reference |
+| `0x0C334998` | `int fs_putfilep(file *)`, releases the retained source |
+| `0x0C341C7A` | `int file_dup3(file *src,file *dst,int flags)`, owned destination |
+| `0x0C33CC4C` | `ssize_t file_write(file *,const void *,size_t)`, negative errno |
+| `0x0C340A24` | `int file_close(file *)`, closes the owned duplicate |
+| `0x0C3EA6E4` | `void uv_close(handle *,close_callback)`, owner-loop close |
+
+The custom wake preserves libuv's atomic busy counter (+24) and pending flag
+(+60), including pending exchange before a single-byte write, EINTR retry,
+EAGAIN coalescing, and decrementing busy after the write. The receiver clears
+pending before invoking the async callback. `qjs::notify` holds the binding
+mutex across the wake, so owner withdrawal cannot race with a producer.
+A normal drain processes at most 16 events per turn, then signals another turn
+if needed. The existing deadline heartbeat also retries retained events after
+an unexpected hard write error; it is not the normal delivery mechanism.
+
+Feature onDestroy runs before the manager closes its own async. It removes the
+owner from the producer registry under that same mutex, then calls uv_close on
+the owned async. Only its close callback closes the owned file and frees handle
+storage. The firmware's app shutdown runs uv_run(UV_RUN_NOWAIT) while draining
+closing handles before destroying the loop. No callback after owner withdrawal
+accesses its JS context, manager, or subscription. Owner tokens are nonwrapping.
 
 The binding's mutex uses the firmware libuv initializer/lock/unlock at
 `0x0C3F4B64`, `0x0C3F4BF8`, and `0x0C3F4C14`. The initializer calls

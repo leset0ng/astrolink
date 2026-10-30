@@ -74,7 +74,7 @@ struct Owner {
     id: u32,
     context: Context,
     prototype: usize,
-    manager: usize,
+    endpoint: *mut Notification,
     callback: Value,
     queued: bool,
 }
@@ -83,11 +83,127 @@ impl Owner {
         id: 0,
         context: ptr::null_mut(),
         prototype: 0,
-        manager: 0,
+        endpoint: ptr::null_mut(),
         callback: UNDEFINED,
         queued: false,
     };
 }
+// The async handle is initialized and closed only by its QJS loop. The
+// duplicated kernel file is independent of every producer's descriptor table.
+#[repr(C, align(8))]
+struct Notification {
+    async_handle: [u32; 16],
+    wake_file: [u64; 4],
+    file_open: bool,
+}
+unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
+    let stock_async = ptr::read_unaligned((manager + 60) as *const usize);
+    if stock_async == 0 {
+        return ptr::null_mut();
+    }
+    let loop_pointer = ptr::read_unaligned((stock_async + 4) as *const usize);
+    if loop_pointer == 0 {
+        return ptr::null_mut();
+    }
+    let endpoint =
+        fw!(0x0c351724, unsafe extern "C" fn(usize) -> *mut Notification)(mem::size_of::<
+            Notification,
+        >());
+    if endpoint.is_null() {
+        return endpoint;
+    }
+    ptr::write(
+        endpoint,
+        Notification {
+            async_handle: [0; 16],
+            wake_file: [0; 4],
+            file_open: false,
+        },
+    );
+    (*endpoint).async_handle[0] = owner;
+    let result = fw!(
+        0x0c3f45f4,
+        unsafe extern "C" fn(
+            usize,
+            *mut Notification,
+            unsafe extern "C" fn(*mut Notification),
+        ) -> i32
+    )(loop_pointer, endpoint, notification_ready);
+    if result != 0 {
+        fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
+        return ptr::null_mut();
+    }
+    let fd = ptr::read_unaligned((loop_pointer + 316) as *const i32);
+    let mut file = ptr::null_mut::<c_void>();
+    let retained = fw!(
+        0x0c332c90,
+        unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
+    )(fd, &mut file);
+    if retained == 0 {
+        let copied = fw!(
+            0x0c341c7a,
+            unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32
+        )(file, (*endpoint).wake_file.as_mut_ptr().cast(), 0);
+        fw!(0x0c334998, unsafe extern "C" fn(*mut c_void) -> i32)(file);
+        (*endpoint).file_open = copied == 0;
+    }
+    if !(*endpoint).file_open {
+        close_notification(endpoint);
+        return ptr::null_mut();
+    }
+    endpoint
+}
+unsafe extern "C" fn notification_ready(endpoint: *mut Notification) {
+    drain(1, (*endpoint).async_handle[0] as usize);
+}
+unsafe fn close_notification(endpoint: *mut Notification) {
+    fw!(
+        0x0c3ea6e4,
+        unsafe extern "C" fn(*mut Notification, unsafe extern "C" fn(*mut Notification))
+    )(endpoint, notification_closed);
+}
+unsafe extern "C" fn notification_closed(endpoint: *mut Notification) {
+    if (*endpoint).file_open {
+        fw!(0x0c340a24, unsafe extern "C" fn(*mut c_void) -> i32)(
+            (*endpoint).wake_file.as_mut_ptr().cast(),
+        );
+    }
+    fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
+}
+unsafe fn wake_notification(endpoint: *mut Notification) -> i32 {
+    use ::core::sync::atomic::AtomicU32;
+    // Match uv_async_send's busy/pending protocol, but use an owned kernel
+    // file rather than resolving the loop's fd in the producer's task group.
+    let busy = &*ptr::addr_of!((*endpoint).async_handle[6]).cast::<AtomicU32>();
+    let pending = &*ptr::addr_of!((*endpoint).async_handle[15]).cast::<AtomicU32>();
+    if pending.load(Ordering::Acquire) != 0 {
+        return 0;
+    }
+    busy.fetch_add(1, Ordering::AcqRel);
+    let mut result = 0;
+    if pending.swap(1, Ordering::AcqRel) == 0 {
+        let byte = 1u8;
+        loop {
+            let written = fw!(
+                0x0c33cc4c,
+                unsafe extern "C" fn(*mut c_void, *const u8, usize) -> isize
+            )((*endpoint).wake_file.as_mut_ptr().cast(), &byte, 1);
+            if written == -4 {
+                continue;
+            }
+            if written != 1 && written != -11 {
+                result = if written < 0 { written as i32 } else { -5 };
+                // Retain native events for the deadline heartbeat's next
+                // wake_owners() retry if the wake driver reported a failure.
+                pending.store(0, Ordering::Release);
+            }
+            break;
+        }
+    }
+    busy.fetch_sub(1, Ordering::AcqRel);
+    result
+}
+
 struct State {
     adapter: Option<&'static Adapter>,
     owners: [Owner; OWNER_COUNT],
@@ -280,12 +396,17 @@ unsafe extern "C" fn on_create(context: Context, prototype: usize) {
         return;
     };
     let id = state.next_owner;
+    let endpoint = create_notification(manager, id);
+    if endpoint.is_null() {
+        trace(95);
+        return;
+    }
     state.next_owner = next;
     state.owners[index] = Owner {
         id,
         context,
         prototype,
-        manager,
+        endpoint,
         callback: UNDEFINED,
         queued: false,
     };
@@ -334,6 +455,12 @@ unsafe extern "C" fn on_destroy(context: Context, prototype: usize) {
         state.owners[index] = Owner::EMPTY;
         (owner, state.adapter)
     };
+    // onDestroy runs on the owning QJS loop before its manager closes. The
+    // state withdrawal above bars producers; the guard serialized all prior
+    // writes. Storage and file ownership last until the uv_close callback.
+    if !owner.endpoint.is_null() {
+        close_notification(owner.endpoint);
+    }
     if let Some(adapter) = adapter {
         (adapter.close_owner)(owner.id);
     }
@@ -350,8 +477,8 @@ unsafe fn current(context: Context) -> Option<(Owner, &'static Adapter)> {
     Some((*owner, state.adapter?))
 }
 
-/// Wake a context from any ordinary firmware task. No JS values are touched.
-/// Posting and onDestroy are serialized so a manager cannot be freed mid-post.
+/// Signal the JS owner's module async through its retained pipe file.
+/// The binding guard pins the handle and file until the write completes.
 pub fn notify(owner_id: u32) {
     if owner_id == 0 || !READY.load(Ordering::Acquire) {
         return;
@@ -371,24 +498,12 @@ pub fn notify(owner_id: u32) {
             return;
         }
         owner.queued = true;
-        #[repr(C)]
-        struct Task {
-            reference: usize,
-            callback: usize,
-            user: usize,
-            reserved: usize,
-            simple: u8,
-            padding: [u8; 7],
+        let result = wake_notification(owner.endpoint);
+        if result != 0 {
+            owner.queued = false;
+            trace(96);
+            trace(result as u32);
         }
-        let task = Task {
-            reference: 0,
-            callback: drain as *const () as usize,
-            user: owner.id as usize,
-            reserved: 0,
-            simple: 0,
-            padding: [0; 7],
-        };
-        fw!(0x0c491cd0, unsafe extern "C" fn(usize, *const Task))(owner.manager, &task);
     }
 }
 
