@@ -261,3 +261,20 @@ appropriate admission scope, with explicit stop and close remaining authoritativ
 These runs establish the simulated firmware integration, not RF/hardware
 capacity, phone/Audio coexistence, background guarantees or long-duration heap
 stability. Those remain physical-device/stability acceptance work.
+
+## v37: per-target ABI layout, unchanged Q66 `.155` behaviour
+
+ELF SHA-256: `fc08f9d9256e0b96c18e5e30b8eedd5e5fe637c42613ddef3de4e2c79bfac0be`.
+Package size 98,816 bytes; resident size 50,541 bytes; 1,244 relocations.
+
+Firmware addresses and structure offsets moved into `src/abi/<target>.rs`; the
+GAP, CoC, libuv and QuickJS logic is shared and target independent. The `.155`
+values are unchanged, which the rebuild confirms: the resident size and
+relocation count are identical to v36.
+
+Device `astrolink-q66-155` in `/tmp/astrolink-mirage-validation`, module
+`version 37`, `activationError 0`. `/tmp/astrolink-v37-probe/summary.json`
+records `ok=true`, terminal `complete` and all 18 lifecycle checks passing,
+the same set as v35/v36. This run does not repeat the v36 two-role LE CoC peer
+integration; that evidence stays attributed to v36, whose firmware call path
+this build preserves value for value.

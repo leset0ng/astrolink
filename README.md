@@ -15,8 +15,10 @@ receiver, the phone connection, the Bluetooth adapter, or pairing callbacks.
 
 ## Validated build
 
-Version code **36** passes the real Q66 `.155` native lifecycle probe and both
-LE CoC connection directions in the isolated Mirage environment. The example
+Version code **37** is the same Q66 `.155` behaviour with the per-target ABI
+layout; it passes the 18-check native lifecycle probe. Version code **36** is
+the build that also passed both LE CoC connection directions in the isolated
+Mirage environment. The example
 exercised complete 0/1/511/512-byte SDUs, matching service HELLO, binary
 request/reply checks, oversize rejection and CoC/LE cleanup. The final native
 runs use the firmware Bluelet host and a standard external LE peer.
