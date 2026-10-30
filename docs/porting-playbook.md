@@ -103,21 +103,30 @@ commit to revert.
 
 ## When the shape differs, not just the address
 
-Two Firmware facts that an address-only abi module cannot express, both found on
-p67, so a port has to decide them in code rather than by substituting a number:
+Per-target call shapes must come from the actual native producer/consumer
+pair, not a similarly named convenience wrapper. On p67 the generic advertising
+producer still takes the 28-byte parameter block; the MiWear convenience API
+accepts flags and constructs that block itself. The Bluelet queue takes five
+arguments, with separate run and cancellation callbacks.
 
-- `F_FILE_WRITE(file, buf, len)` assumes a scalar write. p67 has no such
-  function: only `file_writev(file, iovec)` (`0xC1D2540`) and `nx_write`
-  (`0xC1D25F4`), which builds a one-element iovec and calls it. Adapting means
-  constructing an iovec, not finding another address.
-- `F_FS_PUTFILEP(file)` exists on p67 as a real one-argument release, but IDA
-  never marked it as a function (it sits as a `loc_`), so a symbol-table-driven
-  search misses it. Trust the reference-count decrement plus the list release,
-  not the function list.
+P67 also has a real scalar `file_write` at `0x0C1D25D4` and direct entries for all
+six required QuickJS value APIs. Earlier claims that those operations required
+writev, custom string allocation, or ArrayBuffer compositions were incorrect.
+`uv_close` exists at `0x0C2DB874`; its async storage is 112 bytes. The independent
+ferry registration path and its measured object chain are documented in
+`docs/p67-shim-contract.md`.
 
-The general lesson: recover the *contract* (arguments, ownership, failure) for
-each binding, and note when a target cannot satisfy the current call shape. That
-is a module change with a review, not a pack edit.
+IDA's recognized function list can miss real entry points, as it did for the
+one-argument `fs_putfilep`. Check bounded raw instructions and caller setup when
+the decompiler or function list gives contradictory results. Match argument
+registers, stack arguments, ownership, return convention and cleanup on both
+success and failure before changing the module's call shape.
+
+An address-only match cannot establish which layer of the Bluetooth stack a
+callback belongs to. P67's ordinary CoC send handler accepts the original SDU
+buffer and creates its own fragment nodes. Passing an already-created node
+causes an invalid CID read and an interior-pointer free; the zero-length path
+instead needs its explicit first fragment and two-byte SDU length field.
 
 ## Traps that cost this session hours
 

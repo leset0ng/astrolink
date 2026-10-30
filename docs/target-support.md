@@ -19,7 +19,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | ABI recovered, integration absent | All four hosts present, but the Feature host is the `ferry`/AIOTJS C++ framework, not the Band 11 Feature framework — see below |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | implemented; native probe in progress | Independent ferry registration, 112-byte async, generic GAP/CoC; initial module activation verified, first QuickApp run reset firmware |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
@@ -33,126 +33,37 @@ built without it. Each pack carries a
 established it, so the verdict is auditable and cannot be mistaken for a
 missing address.
 
-## Why P67 is a discovery job, not a port
+## P67 native integration
 
-Measured, not assumed (`../Canopus-Private/targets/xiaomi-band-10-pro-3.101.043/evidence/p67-astrolink-coverage.md`):
+P67 now has its own ferry registration implementation in `src/qjs/ferry.rs`.
+It wraps the real FrameworkExt application factory and Application initializer
+through RAM virtual-table pointers, then registers the resident descriptor into
+each actual application's native registry. It retains the stock host, runtime,
+manager and application behavior. Creating an unrelated manager from a minimal
+host does not publish a Feature in those applications.
 
-- Matching `.155` against `.043` proposes 313 of 316 functions, but only 46 of
-  the 206 proposals this pack can verify independently agree with an address it
-  already recovered — 22%. Whole-body identity is worse: 19 of 342 names.
-- `uv_loop_t` is a different build. Queue head, mutex and async keep 68/76/104,
-  but the loop's pipe descriptors live at `+360/+364` behind a `-1` guard, and
-  the per-task loop state is 288 bytes instead of 712.
-- libuv carries two more sources and NuttX three more than on q66.
-- The loop is reached through a pthread key into an 808-byte TLS block whose
-  `+760` word holds the default loop, and `uv__get_loop` exists as a callable
-  function there — so adapting it means calling that getter, not re-deriving the
-  q66 offset chain.
+Measured lifecycle arguments remain native FeaturePrototype/FeatureInstance
+pointers. Their manager and JSValue offsets match the shared lifecycle code.
+The target allocates a 112-byte async handle, uses the recovered `uv_close`,
+and retains the loop pipe file for notification across NuttX task groups.
 
-So the 40 remaining bindings have to be found on that image with local evidence
-(producer/consumer, `__FILE__` literals, the `[FEATURE]` and `[bluelet]` format
-strings), not transferred. Filling them from cross-line scores would put
-plausible wrong addresses into a pack that is supposed to prevent exactly that.
+The generic GAP producer takes the ordinary 28-byte advertising parameters;
+the five-argument Bluelet queue retains separate run and cancel callbacks.
+Ordinary CoC request/event layouts, the original-SDU send handler and the
+state-dependent disconnect policy are recorded from this exact firmware.
+All six required QuickJS value functions have direct engine entries.
 
-## Why P67 is not a port and not yet a backend
+Earlier notes claiming missing QuickJS wrappers, a mandatory writev composition,
+JS objects as lifecycle arguments, a four-argument queue, or unavailable
+`uv_close` confused interfaces or missed function boundaries. Those claims are
+superseded by `docs/p67-shim-contract.md`, `docs/p67-native-contract.md`, and the
+exact target-pack evidence committed in Canopus `ae80a30`.
 
-The address layer is done: 41 recovered addresses plus six compositions, every
-one with producer evidence or device measurement
-(`../Canopus-Private/targets/xiaomi-band-10-pro-3.101.043/evidence/p67-astrolink-coverage.md`).
-What is missing is not addresses, it is the contract:
-
-- **Feature host.** On Band 11 the module constructs a framework object and an
-  Application, calls the Feature registration entry and reaches the manager
-  through a vtable at a fixed global. On P67 the Feature runtime is entered
-  through C++ virtual dispatch on **JS objects whose class id is assigned at run
-  time** (`ensureJsClass` reads a `JSClassID` global), and the object that holds
-  the app list and the framework mutex belongs to the `ferry`/AIOTJS application
-  framework — a different subsystem from the one the Band 11 constants describe.
-  Reusing those offsets would produce plausible wrong values, and there is no
-  measured equivalent yet.
-- **Data path.** P67 has no SDU buffer or 16-byte fragment node. Sending hands a
-  caller-allocated stock buffer (`+0` total length, `+2` payload offset, `+4`
-  cid, `+8` header nibble, `+10` flags, payload at `+4+offset`; the handler frees
-  it) to `bt_l2cap_submit_cid`, which re-fragments in place into 8-byte nodes.
-  Receiving delivers a 12-byte `{handle, buffer, end}` node. Both are shimmable,
-  but the module's send and receive paths have to change shape.
-- **Handle teardown.** `uv_close` has no located entry on this image and the
-  unlock primitive could not be isolated, so the module's async-handle lifetime
-  has no verified implementation.
-
-A registered Feature needs the host's registry, and the host creates it per app:
-
-```
-host object (AIOTJS/ferry, from 0xC911306)
-  -> feature_registry_create 0xC8660E4(host)      24-byte registry
-  -> feature_framework_init 0xC86E764(registry, *(host+12))
-  -> feature_register_all 0xC892BC4(registry)
-  -> 28 twelve-byte thunks: feature_register_feature 0xC862898(registry, &descriptor)
-```
-
-`feature_register_feature` refuses a null registry, and the registry is never a
-global, so **a native module cannot register itself on P67**.
-
-It can, however, build the host the registry needs: the whole contract is four
-fields and none of them is dereferenced during registration —
-
-```
-struct Host {            // 16 bytes, caller allocated
-    token: u32,          // +0  stored, used later to build the event adapter
-    sink: u32,           // +4  stored the same way
-    abort: u8,           // +8  must be 0; create() checks it after init
-    pad: [u8; 3],
-    package: *const u8,  // +12 may be null; a std::string is assigned from it
-}
-```
-
-So registration on P67 is `create(host) -> register(registry, &descriptor)`, a
-shim rather than a framework. What stays open is **delivery**: `host+0` builds
-the 148-byte adapter the framework calls back through, and the real host puts
-its `render_` object there, so JS-facing event delivery still needs that
-subsystem (`_pImpl->render_.loop/.stop/.event/.async_del_app`). Registration and
-service publication do not.
-
-What is known for that route: the `JSClassID` global (`dword_2013CE38`) is
-assigned lazily by `ensureJsClass 0xC867040` before any Feature object exists, so
-reading it inside a module callback is safe; the manager table is `0xCDA2CD0`
-(slots `+0x1C` require, `+0x20` find, `+0x24` create, `+0x2C` uninit, prefix five
-words); the framework implementation names itself `_pImpl->render_.loop / .stop /
-.event / .async_del_app` in its own assertion strings (`0xcc9f348`, `0xcc9f3dc`,
-`0xcc9f9b8`), which is the lead for finding the singleton and its vtable.
-
-So P67 is where Band 9/10 are not: the pieces exist and the addresses are
-evidenced. Finishing it means writing a **second integration** — a host-side
-registration path, its own send/receive shims, and a teardown path (`uv_close`
-remains unlocated) — not filling in offsets.
-
-## What stops the P67 module
-
-The pack now carries 41 of the 47 firmware bindings, every one with
-producer/consumer evidence, plus the structures the module needs
-(`evidence/p67-astrolink-coverage.md` §7/7b). Four things still stand between that
-pack and a buildable `src/abi/xiaomi-band-10-pro-3.101.043.rs`:
-
-- `qjs_new_string_len`: the allocation half is known (`len + 17` through the
-  runtime malloc hook at `rt+16`/`+8`, refcount `+0`, length `+4`, hash `+8`, NUL
-  at `+16+len`), but not the wrapper that turns that storage into a tag `-7`
-  value. `0xC278140` interns an atom instead.
-- `qjs_to_cstring_len2`: no candidate in the 340-380 byte range satisfies
-  "allocate `len+1`, copy, NUL-terminate, return the raw pointer"; the one size
-  match is a `StringBuffer` helper.
-- The array-buffer trio (`new_array_buffer_copy`, `get_array_buffer`,
-  `get_typed_array_buffer`): their class ids are built at runtime. The
-  `ArrayBuffer`/`Uint8Array` names live in a name blob that no pointer in the
-  image references, so ids cannot be read statically. `.155`'s `19` is plausibly
-  the same, but the pack policy is no address without evidence.
-- Two call shapes must change on the module side, deliberately: `F_FILE_WRITE`
-  has to become the writev form (`0xC1D2540`, or `nx_write 0xC1D2640`), and
-  `define_property_value_str` is inlined here, so the module must compose atom
-  create (`0xC294DCC`) + define + atom release (`0xC2780B0`) itself.
-
-Getting the rest needs either a runtime check on a device (the class ids) or a
-pass that identifies the runtime's class registration; neither is a guess this
-pack should contain.
+The .043 module builds and passes ELF verification. Its initial v39 installation
+reached BOOT_RESIDENT with activationError zero in the isolated Mirage device.
+The first native QuickApp launch reset firmware, so lifecycle and radio checks
+are **not yet passed**. First-fault debugging and final-build verification are
+in progress; a successful module activation alone does not close that gate.
 
 ## What "recovered" requires
 
@@ -181,9 +92,9 @@ meant to prevent; the correct result is `abi_unsupported!()` plus a note here.
 
 ## Validation status
 
-All three adapted targets build and pass `canopus verify` with the same 50,541
-resident bytes and 1,244 relocations, which is expected: one code image,
-different addresses. The 18-check native lifecycle probe passes on the Q66
+Four targets currently build and pass `canopus verify`. Exact sizes and
+relocation counts vary by host implementation and are recorded with the
+corresponding validation build; build success establishes no runtime result. The 18-check native lifecycle probe passes on the Q66
 `.155` device (`docs/native-validation.md`) and on the Q66 `.179` device.
 
 `.139` is adapted, statically recovered and builds, but it has no device result.

@@ -1,96 +1,134 @@
-# What p67 offers, and what the module has to do instead
+# P67 native integration contracts
 
-Measured from the 3.101.043 image; the addresses live in the target pack. This is
-the design brief for `src/abi/xiaomi_band_10_pro_3_101_043.rs`, because almost
-every difference from Band 11 turns out to be a *shape* difference rather than a
-missing address.
+Exact image: Xiaomi Smart Band 10 Pro `3.101.043`. The integration uses the
+firmware's generic GAP, LE CoC and native Feature interfaces. Earlier notes
+confused those interfaces with the MiWear convenience wrappers and raw stack
+receive handlers; those notes are superseded by the contracts below.
 
-## Feature registration: sixteen-byte host
+## Register in each real application's registry
 
-```
-Host { token: u32, sink: u32, abort: u8 (must be 0), pad: [u8; 3], package: *const u8 }
-```
+The sixteen-byte tuple supplied to `feature_registry_create` is a borrowed
+constructor argument, not an independently usable application host.
+`0x0C8660E4(host)` returns a **Feature manager**, whose raw registry is at `+4`.
+Creating an unrelated manager with a zero-filled host does not publish a Feature
+in an existing or future QuickApp.
 
-`feature_registry_create 0xC8660E4(host)` reads `+4`, checks `+8`, and passes
-`+12` to `feature_framework_init 0xC86E764` as a `std::string`; nothing is
-dereferenced during registration. `feature_register_feature 0xC862898(registry,
-descriptor)` then publishes the module's static descriptor. Delivery to JS is the
-part that still needs the ferry host (`host+0` builds the adapter).
+The real ferry framework singleton lives at `0x2013CFE0`. Its FrameworkExt
+constructor installs the cached vtable pointer `0x2CDA8CD8`; the live isolated
+Mirage device independently confirmed this pointer before module activation.
+The framework's implementation pointer is at `+4`.
 
-## Sending: the caller allocates, the handler frees
+The module preserves the real factory and initialization behavior, adding its
+registration checkpoint through RAM virtual-table pointers:
 
-`bt_l2cap_submit_cid 0xC805BE8(buffer, cid)` writes the cid at `+4` and posts a
-work item; the handler re-fragments in place and **frees the buffer on every
-exit**. The stock buffer from `l2cap_stock_alloc 0xC7EAFBC` is
-`{ u16 total, u16 payload offset, u16 cid, u16 handle, u8 header type, u8 flags,
-payload at 4+offset }`. A zero-length payload is legal: the handler compares
-`total - offset == 0` and sends header only.
+| Item | Measured value |
+| --- | --- |
+| Framework primary vtable | `0x2CDA8CD8`, 13 slots plus two prefix words |
+| Framework factory slot | 8, stock entry `0x0C8E54AC` |
+| Implementation app-list mutex | `+348` |
+| Implementation app vector begin/end | `+460` / `+464` |
+| Application primary vtable | `0x2CDA7C80`, 50 slots plus two prefix words |
+| Application initialization slot | 2, stock entry `0x0C8DB1F8` |
+| Application runtime | `+100` |
+| Runtime Feature manager | `+164` |
+| Manager registry | `+4` |
 
-## Receiving: a twelve-byte node
+Activation checks the live vtable and holds the framework's own recursive
+app-list mutex while checking that no QuickApp is active and installing the
+replacement dispatcher. Copies retain both Itanium prefix words and all stock
+primary slots. Secondary Application vtables remain stock.
 
-`gap_host_stock_receive 0xC7EC47C` allocates `{ handle, buffer, end }` (12 bytes,
-`end` is a pointer, not a length), and the data handler at
-`bt_queue_external(dword_2013BDB4, sub_C7ED8E0, node, 1)` owns it afterwards.
-There is no SDU buffer or fragment node type on this build.
+After the stock application initializer constructs its runtime and manager,
+`feature_register_feature(registry, descriptor)` at `0x0C862898` receives the
+module's resident descriptor. Its success result is exactly `1`; the ferry
+bridge preserves the stock initializer's return convention.
 
-## Cross-task posting: no uv loop needed
+The Supervisor hook engine does **not** implement FPB patching. A direct hook of
+the Flash manager-creator thunk at `0x0C86236C` is therefore not a usable
+production integration. The module uses actual RAM dispatch pointers.
 
-`bt_queue_external 0xC7EB9CC(owner, handler, arg, flag)` uses a firmware-global
-queue (page list `0x2013BD70`, lock `0x2013BD80`, wake `0x2013BD84`, drained by
-the Bluelet FSM task at `0xC7EB038`). The handler is called as
-`handler(owner, event, arg)` on the FSM task; `owner` is a caller token the queue
-never dereferences; the poster allocates `arg` and the handler frees it.
+## Native Feature lifecycle and JavaScript methods
 
-**The trap**: if the queue lock is still null the call does not enqueue — it logs
-and calls `handler(0, 221, arg)` synchronously. Event `221` therefore means
-"ran inline", and the module must tolerate it.
+The descriptor is 28 bytes: version, name, interface name, reserved word,
+lifecycle pointer, member count and members pointer. The lifecycle contains six
+function pointers. The relevant callbacks receive native C++ object pointers:
 
-Because this primitive exists, the module does not need to capture a uv loop on
-p67: no async handle, no `uv_close`.
+- `onCreate(JSContext*, FeaturePrototype*)`, lifecycle `+4`.
+- `onRequired(JSContext*, FeatureInstance*)`, lifecycle `+8`.
+- `onDestroy(JSContext*, FeaturePrototype*)`, lifecycle `+16`.
 
-## LE CoC: numbers known, meanings inferred
+`prototype+12` points to the manager. `instance+112` holds its eight-byte
+JavaScript object value. The prototype's JavaScript value at `+56` is assigned
+**after** `onCreate` returns. The runtime-allocated opaque class identifier is
+used by the stock JavaScript method dispatcher; lifecycle arguments themselves
+are not JavaScript objects.
 
-`handler(event, data)` with `event` in `{1,2,3,5,6,7,8,12,13,14}`; the work item
-flag is always `1` (`COC_QUEUE_EVENT`). The firmware never names them, so the
-module routes by what each branch reads:
+These measured native layouts permit shared owner tracking and JS method/value
+conversion. The ferry registration path remains separate from Band 11's host
+entry point.
 
-| event | data fields used | branch |
-| --- | --- | --- |
-| 1 | `+0` u16, `+4`, `+32`, `+52`, `+56` | channel set-up, then disconnect |
-| 2 | `+0` u16, `+8` array | connection/assignment path |
-| 3 | `+108`, `+114` | configuration check |
-| 5 | `+4` u16 cleared | **data**, handled inline, node freed by us |
-| 6 | `+0` u16 | close by cid |
-| 7 | `+4` dword | close/credit by dword |
-| 8 | `+2` u16 | local flow |
-| 12 | flags `+17` bit0, count `+16`, pairs from `+4` | request |
-| 13 | same flags, `+6`, 24-byte address at `+24` | incoming request |
-| 14 | `+132` count, `+130`, `+106` array | credit/flow update |
+## Event notification and lifetime
 
-The connect request block is `{ cid u16 at 0, psm u16 at 2, flags u8 at 8 (bit0
-LE), psm entry dword at 12, cid pair at 16/20, state u8 at 23 (1 LE, 2 BR) }` —
-a different shape from Band 11's, which carries status fields this one has none
-of.
+The manager's stock async pointer is at `+60`; the async handle's loop pointer
+is at `+4`. On this firmware an async handle occupies **112 bytes**, with busy
+word 6 and pending word 27. A 64-byte Band 11 allocation would overwrite the
+following storage.
 
-## GAP: flag-driven, not struct-driven
+The bridge initializes its own correctly sized async on the owning JS task,
+retains the loop's kernel pipe file for cross-task notification, and closes the
+handle on the JS loop. Firmware `uv_close` is `0x0C2DB874`. Mutex wrappers are
+`uv_mutex_init 0x0C2DCCCC`, lock `0x0C2DCDA8`, unlock `0x0C2DCDC4`.
 
-- Scan: `app_lescan_start 0xC710BCC` → `gap_scan_start_impl 0xC3B1374(adapter,
-  params8, filters, callbacks)`; the message keeps only five bytes of the
-  parameter block, so treat the two words as opaque adapter-command arguments.
-  The callback table at `0x200DFAF0` declares its own size (`0x10`) and holds the
-  report/started/stopped entries at `+4/+8/+0xC`.
-- Scan report: `+7` is a signed byte (RSSI, the `LDRSB` gives it away), `+9`
-  address type, `+0xA` length, `+0xC` the six address bytes.
-- Advertising: `bt_le_start_advertising 0xC70ED94(flags)` — there is **no 28-byte
-  parameter block to fill**. Bits select the mode and the interval is derived
-  inside (160/480/1600/32 units, logged as `625*units/1000` ms), transmit power
-  is a constant `-10` written into the advert parameters, and advertising type is
-  `5` or `7` from bit 0. So the module passes a flag, not a structure.
+The firmware's ordinary Feature task-post API at `0x0C86231C` takes three
+arguments: native instance, callback, argument. It pins the instance and calls
+`callback(active, argument)` with active `1` during normal drain or `0` during
+destruction. Its ordinary descriptor-based libuv wake is not a substitute for a
+pinned kernel file across NuttX task groups.
 
-## ArrayBuffer
+## Generic Bluetooth interfaces
 
-`JS_GetArrayBuffer 0xC2D362C`: tag `-1`, class 19 or 20, then
-`buffer = *(void**)(object + 32)`, `detached = *(u8*)(buffer + 4)`,
-`data = *(void**)(buffer + 0)`, `length = *(u32*)(buffer + 8)`. The producer
-clears `buffer + 4` as a sixteen-bit store, so detached and shared are one byte
-each, not bits of a word.
+The generic advertising producer `0x0C3B118C` takes the adapter, a **28-byte
+parameter block**, advertising bytes, scan-response bytes and callbacks. Mode
+is at parameter `+6`, power at `+15`, interval at `+16`. The high-level MiWear
+routine `0x0C70ED94(flags)` constructs that block before calling the producer;
+its flags are not the generic producer's ABI.
+
+The generic scan producer is `0x0C3B1374`; scan stop is `0x0C3B140C` and
+advertising stop is `0x0C3B125C`. The process-lifetime MiWear IPC client pointer
+is at `0x20126738`; its business loop is at client `+56`. Generic IPC operations
+must run in that business context with its retained wake resource.
+
+`bt_queue_external 0x0C7EB9CC` takes **five** arguments: owner, run callback,
+cancel callback, argument and flag. Error event `221` belongs to the cancellation
+path. Omitting the cancellation callback shifts the remaining arguments and
+cannot be treated as a valid alternative queue contract.
+
+The generic CoC layer must be distinguished from the lower stack's receive
+nodes. Verified callback identifiers include assigned `2`, open `3`, PSM
+registered `9` and credits `17`. The ordinary accept handler is `0x0C80279C`,
+which reads CID at `+0`, status at `+4`, detail at `+6`, and configuration at
+`+52/+60/+62`. The handler at `0x0C802F18` applies disconnect/reject policy;
+it is not the ordinary accept handler.
+
+## QuickJS value APIs
+
+Several earlier records described compositions where direct engine functions
+exist. Measured entries include:
+
+| Operation | Entry |
+| --- | --- |
+| `JS_NewStringLen(ctx, bytes, len)` | `0x0C294B50` |
+| `JS_ToCStringLen2(ctx, len, value, cesu8)` | `0x0C29460C` |
+| `JS_NewArrayBufferCopy(ctx, bytes, len)` | `0x0C2D34C8` |
+| `JS_GetArrayBuffer(ctx, len, value)` | `0x0C2D362C` |
+| `JS_GetTypedArrayBuffer(ctx, value, offset, len, element_size)` | `0x0C2D368C` |
+
+ArrayBuffer objects have class 19 or 20, with their opaque pointer at object
+`+32`. The opaque structure stores **length at `+0`, detached at `+4`, data at
+`+8`**. The copy constructor allocates and copies its payload; it does not adopt
+an external buffer. Strings returned by `JS_NewStringLen` are header pointers
+with tag `-7`, and the function handles UTF-8 input.
+
+Firmware-image analysis establishes ABI evidence. The integration is only
+reported as emulator-verified after a real module activation and fresh native
+QuickApp probe complete. Physical radio verification is a separate gate.
