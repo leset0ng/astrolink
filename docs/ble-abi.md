@@ -69,8 +69,13 @@ by `TCB+100 -> TLS+0 -> taskinfo+16+4*uv_key -> uvstate+664`, where `uv_key` is
 read from `0x200BD444`. The matched task's `TCB+8` group embeds its filelist at
 `+96`; rows are eight entries. Both `loop+312/+316` endpoints are pinned while
 inside the scheduler critical section. Outside that section they must share the
-same pipe inode with operations `0x2CB04FFC` and correct read/write/nonblocking
-flags. The write file is duplicated independently before both pins are released.
+same pipe inode with that target's pipe-operations table and correct
+read/write/nonblocking flags. The identity is per target (`0x2CB04FFC` on
+`.155`, `0x2CB0500C` on `.139`, `0x2CB02E4C` on `.179`): the handlers are the
+same, the address is not, and a foreign value rejects every pair. The full
+offset table and how each value was recovered is in `docs/loop-abi.md`.
+
+The write file is duplicated independently before both pins are released.
 Only the process-lifetime firmware business loop uses this cross-task lookup;
 QJS captures its module async's pipe from its own task and releases it in the
 `uv_close` callback. Neither path caches a PID or borrows another task's fd.

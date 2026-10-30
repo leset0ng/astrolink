@@ -16,9 +16,9 @@ cannot be silently added or dropped.
 
 | Target | Firmware | Status | Notes |
 | --- | --- | --- | --- |
-| `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
+| `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
-| `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
+| `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
 | `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | pending | Bluelet LE CoC confirmed present; GAP client and Feature registry open |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043` |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | pending | Different product line; only identity and strings checked so far |
@@ -55,22 +55,31 @@ meant to prevent; the correct result is `abi_unsupported!()` plus a note here.
 
 All three adapted targets build and pass `canopus verify` with the same 50,541
 resident bytes and 1,244 relocations, which is expected: one code image,
-different addresses. `docs/native-validation.md` records the 18-check native
-lifecycle probe on the Q66 `.155` device.
+different addresses. The 18-check native lifecycle probe passes on the Q66
+`.155` device (`docs/native-validation.md`) and on the Q66 `.179` device.
 
-The `.139` and `.179` devices in the isolated Mirage library have the Supervisor
-resident and the module installed, but they do not reach `ACTIVE` without
-another activation step: after `Run` the registry reports `INSTALLED`/`ENABLED`
-and the module never loads. That is Supervisor boot plumbing on those devices,
-not an ABI result, so no probe result is claimed for them. Two further findings
-from the same session are recorded so they are not rediscovered:
+`.139` is adapted but not probed: its device never brought the Supervisor up in
+this session, so no device result is claimed for it. The per-target offsets it
+carries are still evidenced statically (`docs/loop-abi.md`).
 
-- The Supervisor does not autoload on a `.139`/`.179` device after reboot even
+Device findings worth keeping, so they are not rediscovered:
+
+- An install of the **same** `versionCode` only stages
+  `/canopus/inbox/astrolink.ko.next` and the Supervisor reports `Failed`; the
+  rebooted device keeps running the previous `.ko`. Removing the module first
+  makes the install replace it. A probe that follows such an install measures
+  the old image unless the staged sha is checked.
+- A freshly installed module stops at `INSTALLED` (3). It needs
+  `canopusSetEnabled(true)` and one more Supervisor start before the registry
+  reports `BOOT_RESIDENT` (13), which is the only state in which the probe is
+  meaningful.
+- The Supervisor does not autoload on a `.139`/`.179` device after a reboot even
   with `canopusSetBootPersistence {pinned: true}`, while the `.155` device does.
-  `scripts/mirage-bootstrap.py` therefore presses `Run` after each boot.
-- `canopus package` for three targets produces a package the Supervisor rejects
-  (`Canopus install returned Failed`); a single-artifact package built from the
-  same sources installs. Probe and ship per target until that is fixed.
+  `scripts/mirage-bootstrap.py` presses `Run` after each boot for that reason.
+- Earlier this matrix claimed a three-target package is rejected while a
+  single-target one installs. That observation is now suspect: it was made
+  across same-`versionCode` installs, which never apply (see above). Ship one
+  package with a fresh version code and re-check before recording it again.
 
 ## Adding a target
 
