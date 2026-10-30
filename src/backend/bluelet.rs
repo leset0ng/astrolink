@@ -1378,23 +1378,24 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
             if length > channel.remote_mtu {
                 return Err(Error::InvalidArgument);
             }
-            if length == 0 {
-                send_empty(owner, channel.cid)?;
-            } else {
-                let p = new_buffer(length, 12)?;
-                put_dword(p, abi::SDU_BUFFER_CID, channel.cid as u32);
-                ptr::copy_nonoverlapping(
-                    work.data.as_ptr(),
-                    p.add(abi::SDU_BUFFER_PAYLOAD + word(p, abi::SDU_BUFFER_OFFSET) as usize),
-                    length as usize,
-                );
-                fw!(
-                    abi::F_L2CAP_SEND,
-                    unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
-                    owner,
-                    abi::COC_QUEUE_EVENT,
-                    p
-                );
+            let channel_pointer = fw!(
+                abi::F_L2CAP_FIND_CHANNEL,
+                unsafe extern "C" fn(usize, u16) -> usize,
+                0,
+                channel.cid
+            );
+            if channel_pointer == 0 {
+                return Err(Error::Disconnected);
+            }
+            if abi::queue_send(
+                owner,
+                channel_pointer,
+                channel.cid,
+                work.data.as_ptr(),
+                length,
+            ) < 0
+            {
+                return Err(Error::Busy);
             }
             emit(Event::Submitted { link, send });
         }
@@ -1430,70 +1431,6 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
     }
     Ok(())
 }
-unsafe fn new_buffer(length: u16, headroom: u16) -> Result<*mut u8, Error> {
-    let offset = headroom
-        .checked_add(abi::SDU_BUFFER_PAYLOAD as u16)
-        .ok_or(Error::InvalidArgument)?;
-    let end = length.checked_add(offset).ok_or(Error::InvalidArgument)?;
-    let p = alloc(end as usize + abi::SDU_BUFFER_ALLOC_TAIL);
-    if p.is_null() {
-        return Err(Error::Busy);
-    }
-    put_word(p, abi::SDU_BUFFER_END, end);
-    put_word(p, abi::SDU_BUFFER_OFFSET, offset);
-    if offset > 7 {
-        *p.add(abi::SDU_BUFFER_META) = abi::SDU_BUFFER_META_VALUE;
-    }
-    Ok(p)
-}
-// Stock C86E7F8 loops only while payload_length != 0. For a zero-length SDU,
-// enqueue its one first+last fragment into that SAME credit-controlled queue.
-// No second host, raw HCI path, application framing, or credit implementation.
-unsafe fn send_empty(owner: usize, cid: u16) -> Result<(), Error> {
-    let channel = fw!(
-        abi::F_L2CAP_FIND_CHANNEL,
-        unsafe extern "C" fn(usize, u16) -> usize,
-        0,
-        cid
-    );
-    if channel == 0 {
-        return Err(Error::Disconnected);
-    }
-    let queue = ptr::read_unaligned((channel + abi::COC_CHANNEL_QUEUE) as *const usize);
-    if queue == 0 {
-        return Err(Error::Disconnected);
-    }
-    let p = new_buffer(2, 12)?;
-    *p.add(abi::SDU_BUFFER_META) = 1;
-    put_word(
-        p,
-        abi::SDU_BUFFER_PAYLOAD + word(p, abi::SDU_BUFFER_OFFSET) as usize,
-        0,
-    );
-    let allocation = alloc(abi::FRAGMENT_NODE_SIZE);
-    if allocation.is_null() {
-        free(p);
-        return Err(Error::Busy);
-    }
-    let node = allocation.add(abi::FRAGMENT_NODE_PAYLOAD);
-    put_dword(node, abi::FRAGMENT_NODE_BUFFER, p as usize as u32);
-    *node.add(abi::FRAGMENT_NODE_FLAGS) = abi::FRAGMENT_FLAGS_FIRST_LAST;
-    fw!(
-        abi::F_L2CAP_QUEUE_PUSH,
-        unsafe extern "C" fn(usize, *mut u8) -> i32,
-        queue,
-        node
-    );
-    fw!(
-        abi::F_L2CAP_CREDIT_FLUSH,
-        unsafe extern "C" fn(usize, usize) -> i32,
-        queue,
-        channel
-    );
-    let _ = owner;
-    Ok(())
-}
-
 unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
     if p.is_null() {
         return;
