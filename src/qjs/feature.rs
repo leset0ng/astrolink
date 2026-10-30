@@ -19,10 +19,16 @@ macro_rules! fw {
         mem::transmute::<usize, $ty>($address | 1)
     };
 }
-#[cfg(not(feature = "target-xiaomi-band-10-pro-3-101-043"))]
+#[cfg(not(any(
+    feature = "target-xiaomi-band-10-pro-3-101-036",
+    feature = "target-xiaomi-band-10-pro-3-101-043"
+)))]
 #[path = "framework.rs"]
 mod host;
-#[cfg(feature = "target-xiaomi-band-10-pro-3-101-043")]
+#[cfg(any(
+    feature = "target-xiaomi-band-10-pro-3-101-036",
+    feature = "target-xiaomi-band-10-pro-3-101-043"
+))]
 #[path = "ferry.rs"]
 mod host;
 pub use host::install;
