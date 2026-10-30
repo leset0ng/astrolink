@@ -14,4 +14,4 @@ description = "QuickApp peer BLE discovery and bidirectional LE CoC messaging"
 sources = ["Cargo.toml"]
 
 [targets]
-include = ["xiaomi-band-11-4.100.155"]
+include = ["xiaomi-band-11-4.100.139", "xiaomi-band-11-4.100.155", "xiaomi-band-11-4.100.179"]
