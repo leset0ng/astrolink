@@ -61,8 +61,13 @@ fn abi_modules() -> Vec<AbiModule> {
     let mut modules = Vec::new();
     for entry in fs::read_dir(dir).expect("src/abi") {
         let path = entry.expect("entry").path();
+        // `src/abi` holds one module per exact firmware plus the shared call-shape
+        // shims, which are not a target and deliberately have no target id.
         if path.extension().and_then(|e| e.to_str()) != Some("rs")
-            || path.file_name().and_then(|n| n.to_str()) == Some("mod.rs")
+            || matches!(
+                path.file_name().and_then(|n| n.to_str()),
+                Some("mod.rs") | Some("shims.rs")
+            )
         {
             continue;
         }

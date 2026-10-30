@@ -125,6 +125,10 @@ pub use xiaomi_band_9_3_1_32::*;
 #[cfg(feature = "target-xiaomi-band-9-pro-3-1-190")]
 pub use xiaomi_band_9_pro_3_1_190::*;
 
+#[macro_use]
+#[path = "shims.rs"]
+mod shims;
+
 /// Declares a target whose GAP/LE CoC/QuickJS host has not been recovered.
 ///
 /// The module still compiles and loads for that firmware, but
