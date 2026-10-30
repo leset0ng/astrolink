@@ -87,6 +87,60 @@ pub(super) unsafe fn invoke(
     }
 }
 
+/// Deliver bounded work only on the context owner's JS task.
+/// `matches` detects reentrant owner destruction and subscription replacement.
+pub(super) unsafe fn deliver(
+    context: Context,
+    owner: u32,
+    subscription: Value,
+    adapter: &Adapter,
+    matches: unsafe fn(Context, u32, Value) -> bool,
+) {
+    if subscription == UNDEFINED {
+        return;
+    }
+    // Reentrant unsubscribe/close from a callback must not release the function
+    // currently used by this drain. A local owned reference protects it.
+    let callback = duplicate(subscription);
+    let mut event = Event::EMPTY;
+    // Bound one owner-task turn; remaining work is scheduled through libuv.
+    for _ in 0..16 {
+        if !(adapter.next_event)(owner, &mut event) {
+            free(context, callback);
+            return;
+        }
+        if event.peer_len > event.peer.len() || event.data_len > event.data.len() {
+            continue;
+        }
+        let value = event_object(context, &event);
+        if value == EXCEPTION {
+            clear_exception(context);
+            (adapter.close_owner)(owner);
+            free(context, callback);
+            return;
+        }
+        let result = fw!(
+            abi::F_QJS_CALL,
+            unsafe extern "C" fn(Context, Value, Value, i32, *const Value) -> Value
+        )(context, callback, UNDEFINED, 1, &value);
+        trace(94);
+        free(context, result);
+        free(context, value);
+        if result == EXCEPTION {
+            clear_exception(context);
+        }
+        // A callback can replace the subscription. Remaining events belong to
+        // the new subscriber and should run in a later turn.
+        if !matches(context, owner, subscription) {
+            free(context, callback);
+            notify(owner);
+            return;
+        }
+    }
+    free(context, callback);
+    notify(owner);
+}
+
 unsafe fn request(context: Context, owner: u32, adapter: &Adapter, args: &[Value]) -> Value {
     if args.len() < 3 {
         return integer(-ERROR_INVALID_ARGUMENT);

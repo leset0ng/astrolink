@@ -1,7 +1,6 @@
 //! Band 11 C++ Feature host integration.
 use super::js::{
-    self, clear_exception, define, duplicate, event_object, free, integer, Context, Shared, Value,
-    EXCEPTION, UNDEFINED,
+    self, clear_exception, define, duplicate, free, integer, Context, Shared, Value, UNDEFINED,
 };
 use super::*;
 use crate::abi;
@@ -479,51 +478,17 @@ unsafe extern "C" fn drain(active: i32, owner_id: usize) {
         };
         (*owner, adapter)
     };
-    if owner.callback == UNDEFINED {
-        return;
-    }
-    // Reentrant unsubscribe/close from a callback must not release the function
-    // currently used by this drain. A local owned reference protects it.
-    let callback = duplicate(owner.callback);
-    let mut event = Event::EMPTY;
-    // Bound one owner-task turn; remaining work is scheduled through libuv.
-    for _ in 0..16 {
-        if !(adapter.next_event)(owner.id, &mut event) {
-            free(owner.context, callback);
-            return;
-        }
-        if event.peer_len > event.peer.len() || event.data_len > event.data.len() {
-            continue;
-        }
-        let value = event_object(owner.context, &event);
-        if value == EXCEPTION {
-            clear_exception(owner.context);
-            (adapter.close_owner)(owner.id);
-            free(owner.context, callback);
-            return;
-        }
-        let result = fw!(
-            abi::F_QJS_CALL,
-            unsafe extern "C" fn(Context, Value, Value, i32, *const Value) -> Value
-        )(owner.context, callback, UNDEFINED, 1, &value);
-        trace(94);
-        free(owner.context, result);
-        free(owner.context, value);
-        if result == EXCEPTION {
-            clear_exception(owner.context);
-        }
-        // A callback can replace the subscription. Remaining events belong to
-        // the new subscriber and should run in a later turn.
-        if current(owner.context)
-            .is_none_or(|(now, _)| now.id != owner.id || now.callback != owner.callback)
-        {
-            free(owner.context, callback);
-            notify(owner.id);
-            return;
-        }
-    }
-    free(owner.context, callback);
-    notify(owner.id);
+    js::deliver(
+        owner.context,
+        owner.id,
+        owner.callback,
+        adapter,
+        subscription_matches,
+    );
+}
+
+unsafe fn subscription_matches(context: Context, owner: u32, callback: Value) -> bool {
+    current(context).is_some_and(|(now, _)| now.id == owner && now.callback == callback)
 }
 
 unsafe extern "C" fn native_call(
