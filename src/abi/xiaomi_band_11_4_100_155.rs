@@ -84,7 +84,12 @@ pub const UVSTATE_LOOP: usize = 664;
 /// 32-byte pinned `file` record and its inode pointer.
 pub const FILE_INODE: usize = 16;
 /// `inode->i_ops` identity of the loop's pipe.
-pub const INODE_OPS_PIPE: usize = 0x2cb04ffc;
+///
+/// The native probe accepts the default loop pair only when the inode's
+/// operations pointer equals this table, so the identity is device-proven; the
+/// table itself is recorded in the target pack because `.139` and `.179` place
+/// the same ten pipe handlers at their own addresses.
+pub const INODE_OPS_PIPE: usize = fw::canopus_fw_pipe_file_operations;
 pub const UV_KEY_LIMIT: u32 = 3;
 
 // ---- adapter and GAP -------------------------------------------------------

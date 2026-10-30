@@ -67,6 +67,21 @@ pub const F_NXSCHED_FOREACH: usize = fw::CANOPUS_FW_NXSCHED_FOREACH_CALLABLE;
 pub const D_UV_KEY: usize = fw::canopus_fw_uv_loop_key;
 
 // ---- default loop and task layout ------------------------------------------
+// Every offset below was re-read from this image, not inherited:
+//   `0x0c3f8754` uv_loop_close asserts an empty list at `loop+68` (a1[17]) while
+//     holding `loop+76` (a1+19) and closes the pipe descriptors `loop+312`
+//     (a1[78]) / `loop+316` (a1[79]);
+//   `0x0c3f45f4` uv_async_start clears the handle's busy word `+24` and pending
+//     word `+60`;
+//   `0x0c3f0700` uv__loop_new allocates the 712-byte state and uv_loop_close
+//     compares `slot[166]`, i.e. `+664`, against the loop pointer;
+//   `0x0c34cad4`/`0x0c90a428` uv_key_get/set index `taskinfo + 4*(key+4)` and
+//     reject `key > 3`;
+//   `0x0c34c9ec` -> `0x0c349518` (sched_get_stackinfo.c) read the TLS pointer at
+//     `tcb+100`, and the TLS word at `+0` is that task info;
+//   `0x0c332c90`/`0x0c332ba2` fs_getfilep/files_getfilep use `tcb+8`, the group's
+//     file list at `+96`, eight descriptors per 32-byte file row, and the inode
+//     pointer at file`+16`.
 /// Intrusive ready-work queue head, mutex and async handle in `uv_loop_t`.
 pub const LOOP_QUEUE_HEAD: usize = 68;
 pub const LOOP_MUTEX: usize = 76;
@@ -89,7 +104,13 @@ pub const UVSTATE_LOOP: usize = 664;
 /// 32-byte pinned `file` record and its inode pointer.
 pub const FILE_INODE: usize = 16;
 /// `inode->i_ops` identity of the loop's pipe.
-pub const INODE_OPS_PIPE: usize = 0x2cb04ffc;
+///
+/// Recovered from this image: `nx_pipe` (`0x0c8cd8d8`, anchored by its
+/// `/var/pipe/%d` name and the 2048-byte FIFO allocation) hands this table to
+/// `register_inode` at `0x0c914e7c`, and its ten words are the same pipe
+/// handlers `.155` uses. Only the table's address moved (+0x10), so a `.155`
+/// literal here made `capture_default_loop` reject every candidate pair.
+pub const INODE_OPS_PIPE: usize = fw::canopus_fw_pipe_file_operations;
 pub const UV_KEY_LIMIT: u32 = 3;
 
 // ---- adapter and GAP -------------------------------------------------------
