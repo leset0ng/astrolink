@@ -58,6 +58,19 @@ The loop's pipe identity is the one value that moves: `.139` is `+0x10` from
 first operation that needs a loop wake (a scan start), and nothing else in the
 module misbehaves.
 
+## A sibling from another line is a different layout
+
+`p67` (Band 10 Pro) keeps the same `best1503` SoC but is a different board build,
+and its `uv_loop_t` is not the q66 one: the queue head, mutex and async are still
+at 68/76/104, but the loop's pipe descriptors live at `+360/+364` behind a
+`loop+360 == -1` guard (created lazily by `uv_async_init`), and the per-task loop
+state is 288 bytes rather than 712. Its libuv also carries `udp.c` and
+`posix-hrtime.c`, which q66 does not.
+
+So the offset table above is a **Band 11** result. Re-derive it for any other
+board path rather than assuming the SoC implies the layout, and check the libuv
+source list first: a different file set is enough to know the layout moved.
+
 ## Porting the next target
 
 The values are cheap to get right and expensive to guess, so recover them in
