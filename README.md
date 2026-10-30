@@ -127,9 +127,12 @@ packages are under `dist/`. Verify the resulting `.canopus` using
 After activation, reopen a QuickApp so its fresh Feature registry includes
 Astrolink.
 
+Tests need one exact-firmware feature, because the generated address crate only
+builds for the target it was generated from:
+
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --features target-xiaomi-band-11-4-100-155
+cargo clippy --all-targets --features target-xiaomi-band-11-4-100-155 -- -D warnings
 cargo fmt --check
 ```
 

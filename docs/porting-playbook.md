@@ -77,7 +77,8 @@ So a sibling port is: ~250 addresses, ~4 data globals, one offset audit, done.
 ```sh
 cd ../astrolink
 ../Canopus-Private/target/debug/canopus build      # verify catches a wrong or unrecorded address
-cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt
+cargo test --features target-<id> && \
+  cargo clippy --all-targets --features target-<id> -- -D warnings && cargo fmt
 python3 scripts/mirage-bootstrap.py --library <lib> --target <target> --device <dev> \
     --bridge <dylib> --module dist/<pkg>.canopus --probe examples/quickapp/dist/astrolink-probe-source.rpk
 ```
