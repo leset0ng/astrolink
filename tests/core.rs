@@ -440,6 +440,51 @@ fn stop_advertising_prevents_new_links_and_preserves_existing_link() {
 }
 
 #[test]
+fn incoming_coc_survives_controller_advertising_termination() {
+    let mut engine = Engine::<2>::new();
+    let session = engine.create_session(1, "chat").unwrap();
+    engine.begin_advertising(session).unwrap();
+    engine.advertising_started(session, Ok(())).unwrap();
+    // A legacy connectable set terminates when the ACL connects, before the
+    // peer can send its CoC request. Listener intent remains until explicit stop.
+    engine.advertising_stopped(session).unwrap();
+    assert_eq!(
+        engine.session(session).unwrap().advertising,
+        ResourceState::Idle
+    );
+    let link = engine.accept(session, peer(1), 0).unwrap();
+    assert!(engine.link(link).unwrap().inbound);
+    // Stopping an already terminated set must still revoke listener admission.
+    assert!(!engine.begin_stop_advertising(session).unwrap());
+    assert_eq!(engine.accept(session, peer(2), 0), Err(Error::Busy));
+    assert!(engine.link(link).is_ok());
+    engine.close_session(session).unwrap();
+    assert_eq!(engine.accept(session, peer(2), 0), Err(Error::Disconnected));
+}
+
+#[test]
+fn failed_or_cancelled_advertising_never_admits_incoming_coc() {
+    let mut engine = Engine::<2>::new();
+    let session = engine.create_session(1, "chat").unwrap();
+    engine.begin_advertising(session).unwrap();
+    assert_eq!(engine.accept(session, peer(1), 0), Err(Error::Busy));
+    assert_eq!(
+        engine.advertising_started(session, Err(Error::Backend(7))),
+        Err(Error::Backend(7))
+    );
+    engine.advertising_stopped(session).unwrap();
+    assert_eq!(engine.accept(session, peer(1), 0), Err(Error::Busy));
+    engine.begin_advertising(session).unwrap();
+    engine.begin_stop_advertising(session).unwrap();
+    assert_eq!(
+        engine.advertising_started(session, Ok(())),
+        Err(Error::Disconnected)
+    );
+    engine.advertising_stopped(session).unwrap();
+    assert_eq!(engine.accept(session, peer(1), 0), Err(Error::Busy));
+}
+
+#[test]
 fn core_storage_is_bounded_for_device_and_multilink_configuration() {
     assert!(std::mem::size_of::<Engine<1>>() < 8 * 1024);
     assert!(std::mem::size_of::<Engine<2>>() < 13 * 1024);

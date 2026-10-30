@@ -187,3 +187,71 @@ held the screen awake and restored normal screen behavior on completion.
 This establishes the native GAP and Session lifecycle gate on the isolated
 simulator. CoC establishment, HELLO, binary SDUs and peer/controller cleanup
 remain separate integration gates.
+
+## v35: outgoing real LE CoC and binary traffic
+
+`/tmp/astrolink-v35-peer-traced.json` reports `ok=true` against the standard HCI
+peripheral at the isolated controller's actual peer endpoint. The real example
+scanned/discovered the peer, initiated LE, sent CoC request 0x14, received response
+0x15, and exchanged the exact `chat` HELLO. Firmware and peer CIDs were distinct
+(`0x47` and `0x40`), exercising real credit routing in both directions.
+
+The peer received actual firmware SDUs of 0, 1, 32, 511 and 512 bytes. Its
+511/512-byte example requests received byte-verified firmware responses. The
+example's boundary action also verified a 32-byte binary response, a maximum
+512-byte response, and rejection of an oversized message. The peer finished
+with no pending K-frames/ACL/completions and no CoC/LE cleanup errors.
+`/tmp/astrolink-v35-coc-live/guest-logs/ram-syslog.log` independently records
+QuickApp consumption of the peer's actual 0-byte and 1-byte messages, replies
+for 511/512 bytes, and successful example boundary checks. This is protocol
+integration over the controller model, not a physical radio claim.
+
+## Incoming admission defect reproduced on v35
+
+Both `/tmp/astrolink-v35-peer-central.json` and
+`/tmp/astrolink-v35-peer-central-traced.json` completed real LE establishment
+against the module's connectable `chat` advertisement, then received CoC result
+`0x0004`. Focused resident-code breakpoints recorded `Engine::accept` reading
+Session advertising state Idle and taking the BUSY branch before
+`backend::reject`; the transcript is `/tmp/pi-bg/job-23818-687.log`.
+
+Advertising-resource termination cannot itself revoke the service's listener
+intent: a peer first establishes the LE ACL, which terminates connectable
+advertising, and only then sends its CoC request. The repair gives the Session
+an explicit admission state. Successful advertising opens admission; an explicit
+stop closes it immediately even if the controller already terminated the set;
+Session close removes admission entirely. Failed/cancelled starts never open it.
+The existing advertising resource state still tracks the actual handle and is
+released on the native stopped callback. New regressions cover this ordering,
+explicit stop after automatic termination, and failed/cancelled start admission.
+
+## v36: both real LE CoC roles pass without debugger instrumentation
+
+ELF SHA-256: `4c21222f3a653217cffca61e9fa333e541bb47bf09298f3410df01282763445e`.
+Package size 98,816 bytes; resident size 50,541 bytes; 1,244 relocations.
+Thirty-two host tests, target Clippy and unchanged ELF/package verification pass.
+
+Both `/tmp/astrolink-v36-peer-central.json` (firmware incoming) and
+`/tmp/astrolink-v36-peer-peripheral.json` (firmware outgoing) report `ok=true`.
+Each observed actual LE establishment, successful CoC, matching HELLO, firmware
+SDUs of 0/1/32/511/512 bytes, byte-verified 511/512-byte responses, all outgoing
+queues drained, and successful CoC/LE cleanup. No debugger was attached during
+these v36 runs. The second run reuses the same live QuickApp Session after the
+first peer's disconnect, covering channel retirement and reconnect with a new
+CID.
+
+The incoming run's actual QuickApp log is
+`/tmp/astrolink-v36-incoming-live/guest-logs/ram-syslog.log`: it records connection,
+0/1-byte consumption, 511/512-byte replies, binary comparison, max-size response,
+zero/one-byte submission and oversized-message rejection. The two roles use the
+same published Session/Link API and native Bluelet transport.
+
+Independent static analysis confirmed automatic advertiser termination reaches
+`0x0C86B18C -> 0x0C87EAA0(event4) -> 0x0C4697A0 -> 0x0C4696C0 -> IPC 280`.
+The client callback carries only advertising ID; the connection identity and
+termination reason are not preserved. Session listener intent is therefore the
+appropriate admission scope, with explicit stop and close remaining authoritative.
+
+These runs establish the simulated firmware integration, not RF/hardware
+capacity, phone/Audio coexistence, background guarantees or long-duration heap
+stability. Those remain physical-device/stability acceptance work.

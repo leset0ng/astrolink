@@ -131,6 +131,9 @@ pub struct Session {
     pub scan: ResourceState,
     pub advertising: ResourceState,
     pub allow_duplicates: bool,
+    // Connectable advertising can terminate before the peer opens CoC on its
+    // established ACL. Only explicit stop/close revokes listener admission.
+    accepting: bool,
     peers: [Option<PeerRecord>; MAX_PEERS],
     next_peer: usize,
 }
@@ -326,6 +329,7 @@ impl<const LINKS: usize> Engine<LINKS> {
             scan: ResourceState::Idle,
             advertising: ResourceState::Idle,
             allow_duplicates: false,
+            accepting: false,
             peers: [None; MAX_PEERS],
             next_peer: 0,
         });
@@ -419,11 +423,13 @@ impl<const LINKS: usize> Engine<LINKS> {
         } else {
             ResourceState::Idle
         };
+        session.accepting = result.is_ok();
         result
     }
 
     pub fn begin_stop_advertising(&mut self, id: SessionId) -> Result<bool, Error> {
         let session = self.session_mut(id)?;
+        session.accepting = false;
         match session.advertising {
             ResourceState::Idle | ResourceState::Stopping => Ok(false),
             _ => {
@@ -499,7 +505,7 @@ impl<const LINKS: usize> Engine<LINKS> {
     }
 
     pub fn accept(&mut self, session: SessionId, peer: Peer, now_ms: u64) -> Result<LinkId, Error> {
-        if self.session(session)?.advertising != ResourceState::Active {
+        if !self.session(session)?.accepting {
             return Err(Error::Busy);
         }
         if self.links().any(|link| {
