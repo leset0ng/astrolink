@@ -259,3 +259,7 @@ pub const INSTANCE_HANDLE: usize = 112;
 pub const JSVALUE_CLASS_OFFSET: usize = 6;
 pub const ARRAY_BUFFER_DATA: usize = 32;
 pub const ARRAY_BUFFER_DETACHED: usize = 4;
+
+// Direct call shapes: every operation below binds one firmware function, so
+// the shims are single indirect calls (`src/abi/shims.rs`).
+crate::abi_firmware_shims!();

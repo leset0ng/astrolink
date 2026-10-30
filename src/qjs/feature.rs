@@ -694,20 +694,14 @@ unsafe fn clear_exception(context: Context) {
     free(context, value);
 }
 unsafe fn string(context: Context, bytes: &[u8]) -> Value {
-    fw!(
-        abi::F_QJS_NEW_STRING_LEN,
-        unsafe extern "C" fn(Context, *const u8, usize) -> Value
-    )(context, bytes.as_ptr(), bytes.len())
+    abi::qjs_new_string_len(context, bytes.as_ptr(), bytes.len())
 }
 unsafe fn string_bytes(context: Context, value: Value, out: &mut [u8]) -> Option<usize> {
     if (value >> 32) as i32 != -7 {
         return None;
     }
     let mut len = 0;
-    let pointer = fw!(
-        abi::F_QJS_TO_CSTRING_LEN2,
-        unsafe extern "C" fn(Context, *mut usize, Value, i32) -> *const u8
-    )(context, &mut len, value, 0);
+    let pointer = abi::qjs_to_cstring_len2(context, &mut len, value, 0);
     if pointer.is_null() {
         clear_exception(context);
         return None;
@@ -736,10 +730,7 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     let buffer = if class == 19 {
         duplicate(value)
     } else if class == 23 {
-        fw!(
-            abi::F_QJS_GET_TYPED_ARRAY_BUFFER,
-            unsafe extern "C" fn(Context, Value, *mut usize, *mut usize, *mut usize) -> Value
-        )(context, value, &mut offset, &mut length, &mut element_size)
+        abi::qjs_get_typed_array_buffer(context, value, &mut offset, &mut length, &mut element_size)
     } else {
         return None;
     };
@@ -748,10 +739,7 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
         return None;
     }
     let mut buffer_len = 0;
-    let pointer = fw!(
-        abi::F_QJS_GET_ARRAY_BUFFER,
-        unsafe extern "C" fn(Context, *mut usize, Value) -> *const u8
-    )(context, &mut buffer_len, buffer);
+    let pointer = abi::qjs_get_array_buffer(context, &mut buffer_len, buffer);
     if class == 19 {
         length = buffer_len;
     }
@@ -787,11 +775,7 @@ unsafe fn define(context: Context, object: Value, name: &[u8], value: Value) -> 
     if value == EXCEPTION {
         return false;
     }
-    fw!(
-        abi::F_QJS_DEFINE_PROPERTY_VALUE_STR,
-        unsafe extern "C" fn(Context, Value, *const u8, Value, i32) -> i32
-    )(context, object, name.as_ptr(), value, 7)
-        >= 0
+    abi::qjs_define_property_value_str(context, object, name.as_ptr(), value, 7) >= 0
 }
 macro_rules! property {
     ($context:expr, $object:expr, $name:expr, $value:expr) => {
@@ -858,10 +842,7 @@ unsafe fn event_object(context: Context, event: &Event) -> Value {
         b"peerId\0",
         string(context, &event.peer[..event.peer_len])
     );
-    let buffer = fw!(
-        abi::F_QJS_NEW_ARRAY_BUFFER_COPY,
-        unsafe extern "C" fn(Context, *const u8, usize) -> Value
-    )(context, event.data.as_ptr(), event.data_len);
+    let buffer = abi::qjs_new_array_buffer_copy(context, event.data.as_ptr(), event.data_len);
     property!(context, value, b"data\0", buffer);
     value
 }

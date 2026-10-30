@@ -120,10 +120,7 @@ impl PipeWake {
         if pending.swap(1, Ordering::AcqRel) == 0 {
             let byte = 1u8;
             loop {
-                let written = fw!(
-                    abi::F_FILE_WRITE,
-                    unsafe extern "C" fn(*mut c_void, *const u8, usize) -> isize
-                )(self.file.as_mut_ptr().cast(), &byte, 1);
+                let written = abi::write_byte(self.file.as_mut_ptr().cast(), byte);
                 if written == -4 {
                     continue;
                 }

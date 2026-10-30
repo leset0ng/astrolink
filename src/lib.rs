@@ -4,6 +4,8 @@
 #![cfg_attr(feature = "device", no_std)]
 
 pub mod abi;
+#[macro_use]
+mod abi_shims;
 pub mod backend;
 pub mod core;
 #[cfg(feature = "device")]
