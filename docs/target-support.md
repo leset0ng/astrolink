@@ -19,12 +19,19 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | pending | Bluelet LE CoC confirmed present; GAP client and Feature registry open |
-| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043` |
-| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | pending | Different product line; only identity and strings checked so far |
-| `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | pending | Pack records classic Bluetooth only |
-| `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | pending | Pack records classic Bluetooth only |
-| `xiaomi-band-10-3.1.28` | 3.1.28 (O66) | pending | Pack records classic Bluetooth only |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | recovering | All four hosts present, including `FeatureManagerQjs`; this line is a different SoC generation, so every offset is recovered from its own image |
+| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; ports as its sibling once `.043` lands |
+| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
+| `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
+| `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | unsupported | Same verdict as its `3.1.32` sibling; its own AP is in a `ZZ~` container that does not extract, so the evidence is explicitly sibling-level |
+| `xiaomi-band-10-3.1.28` | 3.1.28 (O66) | unsupported | No Feature runtime and no L2CAP channel names; a Supervisor and Manager do run there, but no module has ever registered |
+
+The `unsupported` rows are decided, not deferred: Astrolink publishes its
+service through the firmware's QuickJS Feature runtime, and those images were
+built without it. Each pack carries a
+`capability_finding.feature_runtime_absent` record naming the probe that
+established it, so the verdict is auditable and cannot be mistaken for a
+missing address.
 
 ## What "recovered" requires
 
