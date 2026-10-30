@@ -76,10 +76,11 @@ Device findings worth keeping, so they are not rediscovered:
 - The Supervisor does not autoload on a `.139`/`.179` device after a reboot even
   with `canopusSetBootPersistence {pinned: true}`, while the `.155` device does.
   `scripts/mirage-bootstrap.py` presses `Run` after each boot for that reason.
-- Earlier this matrix claimed a three-target package is rejected while a
-  single-target one installs. That observation is now suspect: it was made
-  across same-`versionCode` installs, which never apply (see above). Ship one
-  package with a fresh version code and re-check before recording it again.
+- An earlier revision of this matrix claimed a three-target package is
+  rejected while a single-target one installs. That was wrong: the rejected
+  installs reused a version code, so they were staged and never applied. One
+  package with three artifacts and a fresh version code installs and runs
+  (version 38 on the `.179` device).
 
 ## Adding a target
 
@@ -89,5 +90,6 @@ Device findings worth keeping, so they are not rediscovered:
 3. Add `src/abi/<target>.rs`, reusing `crate::abi` names one to one.
 4. Add the `target-<id>` feature in `Cargo.toml` and the id to
    `[targets] include` in `Canopus.toml`.
-5. Build, `canopus package verify`, then run the probe on that firmware.
+5. Build, `canopus verify`, then `scripts/mirage-bootstrap.py --module <pkg>
+   --probe <rpk>`, which installs, reboots and runs the probe headless.
 6. Commit the pack and the module separately.
