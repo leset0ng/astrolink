@@ -69,11 +69,14 @@ tcb + 100                        -> task info
     TLS block + 760              -> the default loop     (embedded at TLS block + 136)
 ```
 
-- The loop is not in a `uv_key`-indexed state array; libuv keeps its state in a
-  pthread key, and the loop is an embedded struct inside that state.
-- `uv__get_loop` (`0xC2DE814`) is a real function on that build. A p67 target
-  should call it instead of walking NuttX structures — a code change in
-  `loop_dispatch`, to be made deliberately rather than by bending offsets.
+- It is the same walk with a wider state: `task_info + 16 + 4*key` yields an
+  808-byte block (q66's is 712 bytes) and the loop pointer sits at `+760`
+  instead of `+664`. So p67 fits the existing `capture_default_loop` path with
+  `UVSTATE_LOOP = 760` and does not need a different mechanism.
+- `uv__get_loop` (`0xC2DE814`) exists and is callable, but it is not needed:
+  the loop pointer already arrives from the adapter instance
+  (`D_ADAPTER_INSTANCE + ADAPTER_LOOP`), and the walk's only job is to find the
+  task that owns that loop and validate it. Prefer the constants.
 - The loop's pipe descriptors are at `+360/+364`, created lazily by
   `uv_async_init` behind a `loop+360 == -1` guard; `+312/+316` is a plain list
   on that build.
