@@ -86,9 +86,12 @@ pub struct Adapter {
 }
 
 #[cfg(all(test, not(feature = "device")))]
+pub(crate) unsafe fn trace(_: u32) {}
+
+#[cfg(all(test, not(feature = "device")))]
 pub(crate) fn notify(_: u32) {}
 
 #[cfg(feature = "device")]
 mod target;
 #[cfg(feature = "device")]
-pub use target::{install, notify};
+pub(crate) use target::{install, notify, trace};

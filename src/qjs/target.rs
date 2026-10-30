@@ -22,6 +22,14 @@ macro_rules! fw {
         mem::transmute::<usize, $ty>($address | 1)
     };
 }
+pub(crate) unsafe fn trace(stage: u32) {
+    use ::core::sync::atomic::AtomicU32;
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    #[no_mangle]
+    static ASTROLINK_TRACE: Shared<[u32; 64]> = Shared(UnsafeCell::new([0; 64]));
+    let index = NEXT.fetch_add(1, Ordering::Relaxed) as usize % 64;
+    ptr::write_volatile(ASTROLINK_TRACE.0.get().cast::<u32>().add(index), stage);
+}
 
 #[repr(C)]
 struct Lifecycle {
@@ -84,7 +92,7 @@ struct State {
     adapter: Option<&'static Adapter>,
     owners: [Owner; OWNER_COUNT],
     next_owner: u32,
-    original_register: usize,
+    original_framework_vtable: usize,
     hook_id: i32,
 }
 struct Shared<T>(UnsafeCell<T>);
@@ -93,11 +101,17 @@ unsafe impl<T> Sync for Shared<T> {}
 // exceeds its observed fields and is never moved after initialization.
 static READY: AtomicBool = AtomicBool::new(false);
 static MUTEX: Shared<[u32; 8]> = Shared(UnsafeCell::new([0; 8]));
+// Both tables retain the two Itanium ABI prefix words. Only one primary
+// dispatch slot changes in each table; secondary Application vptrs stay stock.
+const FRAMEWORK_VTABLE: usize = 0x2ca8065c;
+const APPLICATION_VTABLE: usize = 0x2ca7c2d4;
+static FRAMEWORK_DISPATCH: Shared<[usize; 15]> = Shared(UnsafeCell::new([0; 15]));
+static APPLICATION_DISPATCH: Shared<[usize; 52]> = Shared(UnsafeCell::new([0; 52]));
 static STATE: Shared<State> = Shared(UnsafeCell::new(State {
     adapter: None,
     owners: [Owner::EMPTY; OWNER_COUNT],
     next_owner: 1,
-    original_register: 0,
+    original_framework_vtable: 0,
     hook_id: -1,
 }));
 struct Guard;
@@ -118,13 +132,15 @@ impl Drop for Guard {
     }
 }
 
-/// Called once, on module activation, before any Astrolink JS references exist.
-/// The module must remain resident after this succeeds. Requires Q66 .155.
+/// Install the synchronous Application factory/init dispatcher on Q66 .155.
+/// The framework must exist and no QuickApp launch may overlap activation.
+/// The module remains resident after this succeeds.
 ///
 /// # Safety
-/// `ctx` must be a valid Supervisor context for this exact target. Call once
-/// from serialized activation, before any application can access this Feature.
-/// The adapter and this module's code/data must remain live until reboot.
+/// `ctx` must be a valid Supervisor context for this exact target. Call from
+/// serialized module activation while QuickApps are closed. The adapter and
+/// this module's code/data must remain live until reboot. No firmware code is
+/// modified: the Supervisor pointer hook replaces a heap object's RAM vptr.
 pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> Result<(), i32> {
     if ctx.is_null() {
         return Err(-22);
@@ -132,20 +148,56 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
     if (*STATE.0.get()).hook_id >= 0 {
         return Ok(());
     }
+    let framework = ptr::read_volatile(0x200d972c as *const usize);
+    if !ram_object(framework) {
+        return Err(-16);
+    }
+    let implementation = ptr::read_unaligned((framework + 4) as *const usize);
+    if !ram_object(implementation) {
+        return Err(-16);
+    }
+    let current = ptr::read_volatile(framework as *const usize);
+    // A distinct extension can own the same RAM dispatcher. Report BUSY rather
+    // than replace a table whose full layout/ownership has not been audited.
+    if current != FRAMEWORK_VTABLE {
+        return Err(-16);
+    }
     let rc = fw!(0x0c3f4b64, unsafe extern "C" fn(*mut c_void) -> i32)(MUTEX.0.get().cast());
     if rc != 0 {
         return Err(rc);
     }
+    ptr::copy_nonoverlapping(
+        (FRAMEWORK_VTABLE - 8) as *const usize,
+        FRAMEWORK_DISPATCH.0.get().cast::<usize>(),
+        15,
+    );
+    ptr::copy_nonoverlapping(
+        (APPLICATION_VTABLE - 8) as *const usize,
+        APPLICATION_DISPATCH.0.get().cast::<usize>(),
+        52,
+    );
+    (*FRAMEWORK_DISPATCH.0.get())[2 + 8] = create_application as *const () as usize;
+    (*APPLICATION_DISPATCH.0.get())[2 + 2] = initialize_application as *const () as usize;
     (*STATE.0.get()).adapter = Some(adapter);
+    // The real framework's recursive render/list mutex guards its app vector.
+    let framework_mutex = (implementation + 204) as *mut c_void;
+    fw!(0x0c3f4bf8, unsafe extern "C" fn(*mut c_void))(framework_mutex);
+    let first = ptr::read_unaligned((implementation + 320) as *const usize);
+    let end = ptr::read_unaligned((implementation + 324) as *const usize);
+    if first != end {
+        fw!(0x0c3f4c14, unsafe extern "C" fn(*mut c_void))(framework_mutex);
+        (*STATE.0.get()).adapter = None;
+        return Err(-16);
+    }
     READY.store(true, Ordering::Release);
-    // Supervisor writes the trampoline before publishing the branch patch.
     let result = Hook::install(
         ctx,
-        0x0c495f2d,
-        register_hook as *const () as usize,
-        &mut (*STATE.0.get()).original_register,
-        HookType::Inline,
+        framework,
+        FRAMEWORK_DISPATCH.0.get().cast::<usize>().add(2) as usize,
+        &mut (*STATE.0.get()).original_framework_vtable,
+        HookType::Pointer,
     );
+    fw!(0x0c3f4c14, unsafe extern "C" fn(*mut c_void))(framework_mutex);
     match result {
         Ok(id) => {
             (*STATE.0.get()).hook_id = id;
@@ -159,25 +211,65 @@ pub unsafe fn install(ctx: *const CanopusContext, adapter: &'static Adapter) -> 
     }
 }
 
-unsafe extern "C" fn register_hook(registry: usize, description: *const Description) -> i32 {
-    let original = fw!(
-        (*STATE.0.get()).original_register,
-        unsafe extern "C" fn(usize, *const Description) -> i32
-    );
-    let result = original(registry, description);
-    // locale is the first stock registration in every fresh application registry.
-    // It is immutable firmware data; avoid reading arbitrary variable strings.
-    if result != 0
-        && !description.is_null()
-        && (*description).name as usize == 0x2cb24eb4
-        && original(registry, &DESCRIPTION) == 0
-    {
-        return 0;
+fn ram_object(address: usize) -> bool {
+    (0x20000000..0x40000000).contains(&address) && address & 3 == 0
+}
+
+unsafe extern "C" fn create_application(framework: usize, uri: *const c_char) -> usize {
+    trace(10);
+    // The stock factory returns a constructed Application and has not yet
+    // started its JS task. Replace its own primary dispatch pointer now.
+    let original = ptr::read_unaligned((FRAMEWORK_VTABLE + 32) as *const usize);
+    let application = fw!(
+        original,
+        unsafe extern "C" fn(usize, *const c_char) -> usize
+    )(framework, uri);
+    if application != 0 && ptr::read_volatile(application as *const usize) == APPLICATION_VTABLE {
+        trace(11);
+        ptr::write_volatile(
+            application as *mut usize,
+            APPLICATION_DISPATCH.0.get().cast::<usize>().add(2) as usize,
+        );
     }
-    result
+    application
+}
+
+unsafe extern "C" fn initialize_application(
+    application: usize,
+    options: usize,
+    loop_pointer: usize,
+) -> i32 {
+    let original = ptr::read_unaligned((APPLICATION_VTABLE + 8) as *const usize);
+    let result = fw!(original, unsafe extern "C" fn(usize, usize, usize) -> i32)(
+        application,
+        options,
+        loop_pointer,
+    );
+    trace(20);
+    // Runs synchronously on this Application's JS task between its stock
+    // initialize and run calls. Registry mutation cannot race require/eval.
+    let runtime = ptr::read_unaligned((application + 100) as *const usize);
+    if runtime == 0 {
+        return result;
+    }
+    let manager = ptr::read_unaligned((runtime + 116) as *const usize);
+    if manager == 0 {
+        return result;
+    }
+    let registry = ptr::read_unaligned((manager + 4) as *const usize);
+    if registry == 0 {
+        return result;
+    }
+    trace(21);
+    fw!(
+        0x0c495f2c,
+        unsafe extern "C" fn(usize, *const Description) -> i32
+    )(registry, &DESCRIPTION)
 }
 
 unsafe extern "C" fn on_create(context: Context, prototype: usize) {
+    trace(30);
+    // FeaturePrototypeQjs, not the QJS class object constructed at C4929C8.
     let manager = ptr::read_unaligned((prototype + 12) as *const usize);
     let mut guard = Guard::lock();
     let state = guard.state();
@@ -200,6 +292,7 @@ unsafe extern "C" fn on_create(context: Context, prototype: usize) {
 }
 
 unsafe extern "C" fn on_required(context: Context, instance: usize) {
+    trace(31);
     let object = ptr::read_unaligned((instance + 112) as *const Value);
     for (name, operation, argc) in [
         (b"getCapabilities\0".as_slice(), 0, 0),
@@ -264,6 +357,7 @@ pub fn notify(owner_id: u32) {
         return;
     }
     unsafe {
+        trace(90);
         let mut guard = Guard::lock();
         let state = guard.state();
         let Some(owner) = state
@@ -299,6 +393,7 @@ pub fn notify(owner_id: u32) {
 }
 
 unsafe extern "C" fn drain(active: i32, owner_id: usize) {
+    trace(if active == 0 { 91 } else { 92 });
     let (owner, adapter) = {
         let mut guard = Guard::lock();
         let state = guard.state();
@@ -345,6 +440,7 @@ unsafe extern "C" fn drain(active: i32, owner_id: usize) {
             0x0c3ccb00,
             unsafe extern "C" fn(Context, Value, Value, i32, *const Value) -> Value
         )(owner.context, callback, UNDEFINED, 1, &value);
+        trace(94);
         free(owner.context, result);
         free(owner.context, value);
         if result == EXCEPTION {
@@ -371,6 +467,11 @@ unsafe extern "C" fn native_call(
     argv: *const Value,
     magic: i32,
 ) -> Value {
+    if magic == 0 {
+        trace(40);
+    } else if magic == 1 {
+        trace(93);
+    }
     let Some((owner, adapter)) = current(context) else {
         return integer(-ERROR_BUSY);
     };
@@ -382,6 +483,9 @@ unsafe extern "C" fn native_call(
     } else {
         slice::from_raw_parts(argv, argc as usize)
     };
+    if magic == 2 && !args.is_empty() {
+        trace(100 + (args[0] as u32).min(20));
+    }
     match magic {
         0 => capabilities_object(context, (adapter.capabilities)()),
         1 => {
@@ -400,6 +504,7 @@ unsafe extern "C" fn native_call(
         }
         2 => request(context, owner.id, adapter, args),
         3 => {
+            trace(41);
             let value = args.first().copied().unwrap_or(UNDEFINED);
             if value != UNDEFINED
                 && fw!(0x0c3bf280, unsafe extern "C" fn(Context, Value) -> i32)(context, value) == 0
@@ -561,6 +666,11 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
         length = buffer_len;
     }
     let payload = ptr::read_unaligned((buffer as u32 as usize + 32) as *const usize);
+    if payload == 0 {
+        free(context, buffer);
+        clear_exception(context);
+        return None;
+    }
     let detached = ptr::read((payload + 4) as *const u8) != 0;
     let valid = !detached
         && (length == 0 || !pointer.is_null())

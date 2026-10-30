@@ -101,3 +101,50 @@ These numbers describe the first integrated build on 2026-10-29; later integrati
 fixes require rebuilding and recording their own hashes. Module loading, Feature
 execution and physical BLE behavior are separate runtime checks.
 
+
+## Activation -38: Flash interception boundary
+
+The first real Supervisor activation returned `-38` from the QJS hook request.
+Inspection of the actual implementation establishes that this is not a missing
+address-catalog entry:
+
+- `runtime/hook/canopus_hook.c:253` returns UNSUPPORTED for a Flash function
+  without a registered RAM dispatch mapping or writable platform code view.
+- `manager/service/canopus_supervisor_platform.c:119` permits inline patching
+  only inside the requesting module's own Umem executable image; its write view
+  points to the corresponding PSRAM data allocation.
+- `FeatureRegisterFeature` at `0x0c495f2c` resides in firmware Flash, so that
+  module-only code view correctly rejects it. An allowlist entry cannot turn
+  Flash into writable PSRAM.
+- `runtime/hook/canopus_hook.h` and `ADR-CAN-008-wearpacket-l2-channel.md` explicitly
+  exclude Flash writes and unsupported Cortex-M33 Flash remapping. The Thumb
+  hook test also asserts that read-only Flash is rejected for all selector types.
+
+No broad hook exception or invented writable Flash alias was added. Safe
+integration requires a recovered RAM dispatch/lifecycle registration opportunity,
+then registration of the exact owned RAM mapping if the hook service is used.
+The existing static function catalog remains valid, but the proposed direct
+Flash inline interception is not executable through this Supervisor.
+
+The actual `.155` Supervisor and installer assets were rebuilt with
+`scripts/build_canopus_supervisor.sh`; the output was byte-identical to the
+tracked production assets. It passed the unchanged verifier (133,596 file bytes,
+185,910 resident bytes, 18 sections, zero undefined symbols, 2,260 relocations,
+two constructors and one destructor). Reinstalling those same assets does not
+change this Flash interception boundary.
+
+Files below are under
+`../Canopus-Private/watchfaces/canopus-installer-prod/xiaomi-band-11/`:
+
+| Asset | SHA-256 |
+| --- | --- |
+| `main.lua` | `6824c35c689e24cf767e109b4da410ac37be1cf9052274b8fbb4d4aca7b96f09` |
+| `canopus_loader_profile-xiaomi-band-11-4.100.155.bin` | `25bcf7861b83af75be88e3e581b7a6a0f8b9514ff078d7f56d4a0f35735a7257` |
+| `canopus_stage1-xiaomi-band-11-4.100.155.bin` | `e7352a9b7fdad066810ac739864b67bc79e6207b0eceb7907e9b3da793e3204a` |
+| `canopus_stage2-xiaomi-band-11-4.100.155.bin` | `1a8e7fdbd5fe53c9dd1a5d6197124aedf2d52c6eadf9f1aaf37316a6aeb334dc` |
+| `canopus_supervisor-xiaomi-band-11-4.100.155.bin` | `2e53115b28ca29f400fd9f1ff8233198ab7a11176880408f9032e1cebdd279f0` |
+| `canopus_boot-xiaomi-band-11-4.100.155.bin` | `9c5279cae17d3fb4dd22d61fda0bbe70d937862e9b3e944e88451244652b724f` |
+
+The optional Thumb/Unicorn test was attempted in the available system Python and
+explicitly skipped with exit 77 because its `unicorn` dependency is absent; no
+execution result is inferred from that skip.

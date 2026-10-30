@@ -16,14 +16,32 @@ Its return is zero on failure and one on success. A registry is allocated per
 application, rather than being a single global system registry. Registration
 retains the description pointer. The module must therefore remain resident.
 
-The stock QuickApp initializer `0x0C745FE0` creates its registry and registers
-`locale` first at callsite `0x0C746460`, followed by the other builtins. Its
-immutable locale name pointer is `0x2CB24EB4`. Astrolink installs a Supervisor
-inline hook on `FeatureRegisterFeature`, calls the original registration, and
-registers its own descriptor through the trampoline after this first builtin.
-This preserves all stock registrations and does not change Bluetooth, packet,
-pairing, or other modules' callbacks. Applications already running when the
-module is activated must reopen to create a registry containing Astrolink.
+Registration uses a synchronous, writable RAM dispatch path. The global at
+`0x200D972C` points to the heap `FrameworkExt` object (also published through
+`0x200C73B0`). Its vptr is a writable word; the stock vtable is `0x2CA8065C`.
+Astrolink copies its thirteen primary virtual slots and two ABI prefix words
+into resident module data and uses the Supervisor's **pointer** hook to replace
+that object's vptr. All slots remain stock except factory slot +32. No firmware
+instruction or flash vtable is written.
+
+The factory `0x0C74CA84` constructs a 440-byte Application through `0x0C73F47C`,
+adds it to the framework's application vector, and returns it before its JS
+thread starts. The wrapper replaces the new Application's primary vptr with a
+resident copy of its fifty primary slots plus two ABI prefix words. It changes
+only initialize slot +8. The secondary vptrs at Application+4 and +24 stay stock.
+The init wrapper calls the original init, then registers Astrolink in the
+newly-created registry using Application+100 -> RuntimeContext+116 ->
+FeatureManager+4 -> registry. The exact thread entry `0x0C74E2DC` calls
+Application virtual init +8 before virtual run +16; source loading/evaluation
+happens in run. Registration therefore runs on the actual JS owner task before
+any source/native import in that context, rather than racing require afterward.
+
+Initial installation requires the framework to exist and QuickApps to be closed
+with no launch overlapping module activation. It checks the framework's app
+vector under its render/list mutex (+204 in the implementation object) and
+returns BUSY if the vector is nonempty. It also returns BUSY if another extension
+already owns a different FrameworkExt vtable. There is no periodic application
+scan, no post-launch registration retry, and no alternate JS transport.
 
 The 28-byte description layout, verified against the builtin tables at
 `0x2CA800D4..0x2CA80438`, is:
@@ -65,8 +83,10 @@ The lifecycle table has six function pointers. Verified slots used here are:
 | 16 | `void onDestroy(JSContext*, FeaturePrototype*)` | `0x0C4A0B7C` |
 
 Slots 12 and 20 are null; their precise semantics are not needed or claimed.
-`onCreate` obtains a generation-safe owner token and stores the prototype's
-manager pointer from +12. The prototype's JSValue slot at +56 is assigned only
+`onCreate` obtains a generation-safe owner token and reads FeatureManagerQjs
+from FeaturePrototypeQjs +12. The +28 pointer belongs to the QJS class object
+constructed at `0x0C4929C8`; it must not be substituted for the Feature
+prototype passed to this lifecycle callback. The prototype's JSValue slot at +56 is assigned only
 **after** onCreate returns, so it cannot be used for property attachment there.
 `onRequired` instead reads the already-initialized instance's weak JSValue at
 +112, which `createJsInstance` (`0x0C4A0668`) sets before returning. Functions
@@ -74,8 +94,12 @@ are attached to that instance. They do not require a JS `this` object.
 
 FeatureManager offsets used by the firmware itself include registry +4,
 context-reference +8, task mutex +32, async handle +60 and task deque +80.
-FeatureInstance holds its prototype at +28; the Feature manager constructor
-passes the underlying JSContext through a 148-byte context table. No layout
+FeaturePrototypeQjs retains FeatureManagerQjs at +12, confirmed by the live
+onCreate callback registers and the QJS prototype layout. The QJS class
+constructor at `0x0C4929C8` separately stores the class's prototype at +28 and
+initializes the class's self-linked list at +8/+12; those are different objects.
+The Feature manager constructor passes the underlying JSContext through a
+148-byte context table. No layout
 from upstream QuickJS is substituted for these Feature objects.
 
 `onDestroy` removes the owner slot while holding the binding's mutex, then
@@ -159,7 +183,8 @@ the core/backend must not retain the borrowed byte slice.
 `src/qjs/mod.rs` defines `Adapter`, `Capabilities`, `Event` and constants.
 The module runtime supplies one static Adapter to
 `unsafe qjs::install(ctx, &ADAPTER)`. Installation must precede opening the
-example application, and the module stays resident afterward.
+example application; all QuickApps must be closed with no concurrent launch
+during that one-time activation. The module stays resident afterward.
 
 Native methods are:
 
@@ -207,7 +232,7 @@ lengths, and must copy data into the fixed Event before returning.
 An isolated crate importing this binding passed `cargo check --features device
 --target thumbv8m.main-none-eabi`. This checks Rust types and actual ARM target
 layout. Firmware functions were renamed and annotated in the IDA database.
-It does not prove that the Supervisor hook engine relocates this prologue on
+It does not prove that the RAM dispatch integration executes successfully on
 the emulator, that app import executes successfully, or that Promise callbacks
 and app exit are correct at runtime. Those require the module's simulator
 integration probe and cannot be inferred from a successful static build.
@@ -289,9 +314,78 @@ The module's complete absolute firmware code reference set is:
 0x0C3F4C14  0x0C491CD0  0x0C495F2C
 ```
 
-Calls set Thumb bit zero; `0x0C495F2D` is also the Supervisor inline-hook
-target, whose original runs through the Supervisor-generated trampoline.
-The sole absolute data identity reference is `0x2CB24EB4` (locale name, pointer
-comparison only). The binding does not directly read fixed RAM globals.
-Descriptor, manager, prototype, context and JS object addresses come from the
-firmware's callback arguments or dynamically allocated objects.
+Calls set Thumb bit zero. `0x0C495F2C` is a direct normal registration call;
+it is no longer a firmware inline-hook target.
+The absolute data references in the current implementation are the framework
+singleton pointer at `0x200D972C`, FrameworkExt vtable with prefixes at
+`0x2CA80654` (60 bytes), and Application vtable with prefixes at `0x2CA7C2CC`
+(208 bytes). The locale name/descriptor addresses above are historical static
+registration evidence and are no longer referenced by module code.
+
+## Manifest initialization and hook-engine boundary
+
+The application initialization path does **not** reject an unknown feature name
+while collecting manifest declarations. In `Application::init` (`0x0C745FE0`),
+`initDeclaredFeatures` starts at `0x0C7472B2`: it checks that `features` is an
+array, iterates entries with a string `name`, and inserts each name into a
+string tree. `0x0C74754E..54` logs `insert feature name:%s`. There is no Feature
+registry lookup in that loop. Missing/wrong-shaped arrays take the informational
+`No declared feature` path, then continue initialization at `0x0C7472DA`.
+`0x0C737D34`, used later by `__app_require`, checks only this declared-name tree.
+Thus the declaration check and implementation availability check are separate.
+
+The available-feature query `Application::hasFeature` (`0x0C745254`, Application
+vtable offset `0x88`) looks up the old registry and then the new per-app Feature
+registry. It reports false for missing descriptions, including checks for dotted
+member names. This is a capability-query path; the inspected app initialization
+and app execution paths do not use it to reject every declared feature before
+source evaluation. The stock Feature registry lookup's observed direct callers
+are FeatureManager `findFeature` / `featureRequire` and this available-feature
+query. This establishes the runtime behavior; it does not claim to exhaustively
+prove every package-installer policy. A missing Astrolink implementation alone
+has not been established as a reason to abort before the example's try/catch.
+The manifest declaration must stay intact during real integration validation.
+
+An initial attempt to inline-hook FeatureRegisterFeature was rejected by the
+actual Supervisor with UNSUPPORTED. Its first eight bytes are copy-safe, but the
+Supervisor's code view authorizes only module-owned executable memory and cannot
+patch firmware Flash. This is a mechanism boundary; adding a callable address
+to a binding allowlist cannot change it. That path was removed from the binding.
+The replacement uses the existing RAM pointer-hook branch, which saves the
+original pointer before assigning the replacement and does not call the code
+view or instruction decoder.
+
+The pointer hook target is the dynamic heap FrameworkExt object's first word.
+The hook value is the module-resident vtable pointer, not a Thumb callable;
+only the function pointers stored inside that table are callable. The SDK's
+pointer-hook branch copies pointer values verbatim and accepts a word-aligned
+SRAM/PSRAM slot. The original vtable and every untouched method are preserved.
+The original Application initialize and factory methods are read from their
+stock tables, making the two wrapper call signatures explicit:
+
+```c
+Application *createApplication(FrameworkExt *framework, const char *uri);
+int initializeApplication(Application *application, RunOptions *options,
+                          uv_loop_t *optional_loop);
+```
+
+The module's fixed data tables are never freed. Stock destructors replace their
+own objects' vptrs as usual; the copied primary tables retain destructor slots,
+ABI offset/type-info prefixes and every unrelated virtual method. The resident
+lifecycle is required because any live Application can retain a copied vptr.
+The root framework singleton is initialized once during the firmware's QuickApp
+interface bootstrap (`0x0C7E88A0`), before ordinary installed QuickApps launch.
+
+Proof sites for the replacement route:
+
+| VA | Evidence |
+| --- | --- |
+| `0x0C7EA088..27C` | Creates FrameworkExt, stores `0x200D972C`, initializes it and publishes `0x200C73B0` |
+| `0x2CA80654` | Two ABI prefix words followed by thirteen FrameworkExt virtual slots |
+| `0x0C74CA84` | Factory allocates 440 bytes, calls Application constructor, and returns object |
+| `0x0C73F47C` | Constructor installs primary vptr `0x2CA7C2D4`, secondary vptrs +4/+24, runtime initially zero |
+| `0x2CA7C2CC` | Two ABI prefix words followed by fifty Application primary slots |
+| `0x0C5849EC` | QuickApp frontend obtains/creates Application, then spawns JS thread |
+| `0x0C74E2DC` | JS thread calls initialize slot +8, then run slot +16 |
+| `0x0C745FE0` | Initialize creates RuntimeContext and per-app Feature manager/registry |
+| `0x0C7479E8` | Run loads/evaluates app.js/app.jsc and starts user application execution |
