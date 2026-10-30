@@ -20,6 +20,8 @@ pnpm test:bundle
 pnpm build
 ```
 
+`pnpm build:probe` 构建独立原生探针，输出 `dist/astrolink-probe-source.rpk`，包名为 `com.canopus.astrolink.probe`，入口为 `pages/probe`，使用现有探针页面和 runner。构建会将源码和配置复制到临时目录，链接本项目已有的 `node_modules`，只修改临时 manifest；结束后清理临时目录，不改动 `src/manifest.json`。源码示例、字节码示例和探针的上述命名 RPK 会在后续构建中保留。安装测试时使用这个产物，无需依赖手工生成的 `/tmp/astrolink-probe-standalone.rpk`。
+
 调试包生成于 `dist/com.canopus.astrolink.example.debug.0.1.0.rpk`，同时保存源码版本 `dist/astrolink-example-source.rpk`。`pnpm build:bytecode` 生成使用 QuickJS 字节码的调试包，并另存 `dist/astrolink-example-bytecode.rpk`，因此两种构建可以同时保留。`pnpm release` 需要先在 `sign/` 配置自己的 release 签名证书；项目不包含私钥。Node.js 18+、pnpm 和构建所需的 aiot-toolkit 均由 `package.json` / `pnpm-lock.yaml` 指定。
 
 应用包名为 `com.canopus.astrolink.example`。先在目标设备安装与其精确固件匹配的 Astrolink 模块并激活，再通过 Mirage 的应用安装功能或 AstroBox 安装 RPK。仅安装 RPK 不会安装原生模块。
@@ -62,6 +64,12 @@ app/page 两个构建 bundle 共享一个全局 façade，因此每个原生 Fea
 | 9..末尾 | 确定性二进制模式 |
 
 对端复制请求并将类型改成响应。本端核对长度、序号和每个字节。8 秒未收到响应时测试失败；Link 断开时立即结束等待并清除计时器。
+
+## 模拟器实测
+
+模块 version code 36 已在 Q66 `4.100.155` 的隔离 Mirage 环境通过 18 项原生生命周期检查，以及示例主动连接、被动接入两种真实 LE CoC 路径。标准 LE 测试对端记录了 HELLO、0/1/511/512 B 完整消息收发和无错误的 CoC/LE 断连；示例设备日志记录了空消息与 1 B 消息的消费、逐字节二进制校验、512 B 回包和超长拒绝。两种连接方向先后复用同一个 Session，随后退出示例并重新运行生命周期探针也通过。
+
+详细结果、固件 ABI 修复及剩余实机验证项见 `../../docs/native-validation.md`，可审查的事件与产物哈希见 `../../docs/evidence/q66-155-v36.json`。这部分证明固件与控制器模型的协议接入，尚不代表两台物理手环的射频、手机/Audio 共存或长时稳定性已通过。
 
 ## 验证边界
 

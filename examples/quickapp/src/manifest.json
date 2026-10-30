@@ -6,10 +6,13 @@
   "minPlatformVersion": 1010,
   "icon": "/common/icon.png",
   "deviceTypeList": ["watch"],
-  "features": [{ "name": "canopus.astrolink" }],
+  "features": [{ "name": "canopus.astrolink" }, { "name": "system.brightness" }],
   "config": { "logLevel": "log", "designWidth": "device-width" },
   "router": {
     "entry": "pages/index",
-    "pages": { "pages/index": { "component": "index" } }
+    "pages": {
+      "pages/index": { "component": "index" },
+      "pages/probe": { "component": "probe" }
+    }
   }
 }

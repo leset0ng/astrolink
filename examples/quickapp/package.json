@@ -12,6 +12,7 @@
     "release": "pnpm typecheck && aiot release --enable-jsc",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node tests/run.cjs",
+    "build:probe": "pnpm typecheck && node scripts/build.cjs probe",
     "build:bytecode": "pnpm typecheck && node scripts/build.cjs bytecode",
     "test:bundle": "pnpm build && node --test tests/bundle.test.cjs"
   },
