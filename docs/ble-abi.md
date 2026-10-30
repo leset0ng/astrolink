@@ -23,11 +23,14 @@ The `Service` token is opaque and contains its originating session generation.
 The exported functions are listed in `src/backend/mod.rs`; they do not expose
 firmware allocation pointers to the core or JavaScript.
 
-GAP methods synchronously perform firmware IPC and must run outside the core
-lock on a normal module/QuickJS task. CoC methods copy their inputs and enqueue
-work onto the existing Bluelet owner. An `Ok(())` for CoC means its work was
-queued; the resulting `Registered`, `Assigned`, `Opened`, `Submitted`, `Closed`
-or `Failed` event carries the actual result.
+GAP methods copy their inputs and post work to the process-lifetime Bluetooth
+business loop (`client+56`) through the existing lock-protected libuv completion
+queue. They must not run on the client response loop (`client+52`), which must
+remain available to complete synchronous IPC. A QuickApp task also cannot use
+the Bluetooth task group's numeric socket descriptor directly. CoC methods copy
+their inputs and enqueue work onto the existing Bluelet owner. An `Ok(())`
+means the work was queued; the resulting callback/event carries the actual
+operation result.
 
 `EventSink` is called from firmware tasks. It must copy borrowed data before
 returning and must not call QuickJS or synchronous GAP IPC. The module runtime
@@ -45,6 +48,13 @@ requests receive a separate `IncomingId`; accepting an old token fails.
 | `0x0C863BB4` | `enqueue(owner,run,cancel,arg,event:u8)` | Locks semaphore at `0x200BE8F4`, appends a 20-byte work entry to a 408-byte ring page, wakes semaphore `0x200BE8E8`. |
 | `0x0C470ED8` | Bluelet thread entry | Removes queued work and calls `run(owner,event,arg)`; calls cancellation on shutdown. |
 | `0x200BE890` | L2CAP owner pointer | All stock L2CAP queue wrappers load this owner. |
+| `0x0C3F4CC4` | `uv__work_submit(loop,work20,kind,worker,done)` | Protected worker and completion queues; a no-op worker posts GAP execution to the business loop's done callback. |
+
+The work prefix is 20 bytes: worker, done, loop, queue next/previous. The target
+loop drain `0x0C3F7F14` unlinks work before calling done and never reads it after
+that callback, allowing the backend to free its containing work there. This
+internal entry does not alter `loop->active_reqs`, unlike public uv_queue_work.
+No foreign-thread `uv_async_init` or dynamic handle lifetime is involved.
 
 `enqueue` calls `cancel(0,221,arg)` synchronously if its queue is unavailable.
 Its return is a semaphore operation's result, not an acceptance status. The
@@ -70,8 +80,10 @@ concurrent close from retiring/reusing its session slot halfway through it.
 The backend uses the process-lifetime MiWear Bluetooth IPC instance at
 `0x200DA4F8`. Stock scan and advertising callers, including
 `0x0C7F92FC`, `0x0C7EF964`, and payment/unlock callers, use this instance.
-It neither changes the adapter callback table nor powers the shared adapter.
-`0x0C46A44C(instance)` returns adapter state, with 4 the ready state.
+It adds a module-owned adapter callback registration without replacing the
+stock callback table. `0x0C46A44C(instance)` returns adapter state, with 4 the
+ready state. If state is OFF, the existing enable IPC is requested and the
+original start operation remains pending while the adapter starts.
 
 | VA | Exact caller ABI |
 | --- | --- |

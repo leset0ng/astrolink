@@ -16,6 +16,10 @@ pub struct IncomingId(pub u32);
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event<'a> {
+    ClientReady,
+    ClientFailed {
+        error: Error,
+    },
     Registered {
         session: SessionId,
         spsm: u8,
@@ -80,6 +84,7 @@ pub enum Event<'a> {
     Failed {
         session: SessionId,
         link: Option<LinkId>,
+        operation: u8,
         error: Error,
     },
     ServiceClosed {
@@ -107,6 +112,12 @@ mod unavailable {
     }
     pub fn acquire(_: SessionId) -> Result<Service, Error> {
         Err(Error::Unsupported)
+    }
+    pub fn ensure_client() -> Result<(), Error> {
+        Err(Error::Unsupported)
+    }
+    pub fn client_ready() -> bool {
+        false
     }
     pub fn register(_: Service) -> Result<(), Error> {
         Err(Error::Unsupported)

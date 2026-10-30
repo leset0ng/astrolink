@@ -32,6 +32,7 @@ struct Slot {
     advertising_ready: bool,
     advertising_launching: bool,
     stop_scan_ready: bool,
+    scan_ready: bool,
     stop_advertising_ready: bool,
     closing: bool,
     close_submitted: bool,
@@ -318,6 +319,7 @@ fn error_code(error: Error) -> i32 {
         Error::Disconnected => qjs::ERROR_DISCONNECTED,
         Error::ReceiveOverflow => qjs::ERROR_RECEIVE_OVERFLOW,
         Error::Backend(_) => qjs::ERROR_BACKEND,
+        Error::NotReady => qjs::ERROR_BUSY,
     }
 }
 fn wake_owners() {
@@ -331,6 +333,10 @@ fn wake_owners() {
         for (index, slot) in runtime.slots.iter().enumerate() {
             if let Some(slot) = slot {
                 if slot.advertising_ready
+                    || slot.scan_ready
+                    || slot.stop_scan_ready
+                    || slot.stop_advertising_ready
+                    || (slot.closing && !slot.close_submitted)
                     || runtime.engine.links().any(|link| {
                         link.owner == slot.owner
                             && (runtime.engine.has_received(link.id)
@@ -370,6 +376,9 @@ fn capabilities() -> qjs::Capabilities {
     }
 }
 fn create_session(owner: u32, bytes: &[u8]) -> Result<u32, i32> {
+    unsafe {
+        qjs::trace(130);
+    }
     if !ACTIVE.load(Ordering::Acquire) {
         return Err(qjs::ERROR_UNSUPPORTED);
     }
@@ -390,6 +399,7 @@ fn create_session(owner: u32, bytes: &[u8]) -> Result<u32, i32> {
             advertising_ready: false,
             advertising_launching: false,
             stop_scan_ready: false,
+            scan_ready: false,
             stop_advertising_ready: false,
             closing: false,
             close_submitted: false,
@@ -399,10 +409,16 @@ fn create_session(owner: u32, bytes: &[u8]) -> Result<u32, i32> {
     .map_err(error_code)?;
     match backend::acquire(id) {
         Ok(service) => {
+            unsafe {
+                qjs::trace(131);
+            }
             locked(|runtime| runtime.slot_mut(id).unwrap().service = Some(service));
             Ok(id.0)
         }
         Err(error) => {
+            unsafe {
+                qjs::trace(180 + error_code(error) as u32);
+            }
             locked(|runtime| {
                 runtime.engine.close_session(id);
                 if let Some(index) = runtime
@@ -483,7 +499,12 @@ fn request(
             Ok(match operation {
                 qjs::OP_START_SCAN => {
                     runtime.engine.begin_scan(session, flag)?;
-                    Work::Scan(service)
+                    if backend::client_ready() {
+                        Work::Scan(service)
+                    } else {
+                        runtime.slot_mut(session).unwrap().scan_ready = true;
+                        Work::None
+                    }
                 }
                 qjs::OP_STOP_SCAN => {
                     if runtime.engine.begin_stop_scan(session)? {
@@ -604,7 +625,32 @@ fn request(
         }
     })
     .map_err(error_code)?;
+    if !backend::client_ready()
+        && matches!(operation, qjs::OP_START_SCAN | qjs::OP_START_ADVERTISING)
+    {
+        if let Err(error) = backend::ensure_client() {
+            locked(|runtime| {
+                runtime.finish(index, None, Err(error));
+                runtime.collect_core_events();
+            });
+            wake_owners();
+            return Ok(());
+        }
+    }
     if let Err(error) = perform(work) {
+        unsafe {
+            qjs::trace(if operation == qjs::OP_CLOSE { 159 } else { 158 });
+            qjs::trace(error_code(error) as u32);
+        }
+        if error == Error::NotReady {
+            locked(|runtime| {
+                if let Some(slot) = runtime.slot_mut(SessionId(handle)) {
+                    slot.scan_ready = true;
+                }
+            });
+            wake_owners();
+            return Ok(());
+        }
         locked(|runtime| {
             if let Some(request) = runtime.pending[index] {
                 match request.operation {
@@ -639,6 +685,51 @@ fn apply_event(
 ) -> Option<(backend::Service, backend::IncomingId, Result<LinkId, Error>)> {
     let mut incoming = None;
     match event {
+        backend::Event::ClientReady => {
+            // Deferred GAP work proceeds on the owner drain/background pump.
+        }
+        backend::Event::ClientFailed { error } => {
+            for index in 0..MAX_SESSIONS {
+                let Some((id, stop_scan, stop_advertising)) = (|| {
+                    let slot = runtime.slots[index].as_mut()?;
+                    let id = slot.id;
+                    slot.scan_ready = false;
+                    slot.advertising_ready = false;
+                    let scan_state = runtime.engine.session(id).map(|session| session.scan);
+                    let adv_state = runtime
+                        .engine
+                        .session(id)
+                        .map(|session| session.advertising);
+                    if scan_state == Ok(ResourceState::Stopping) {
+                        let _ = runtime.engine.scan_stopped(id);
+                        slot.stop_scan_ready = false;
+                    } else {
+                        let _ = runtime.engine.scan_started(id, Err(error));
+                    }
+                    if adv_state == Ok(ResourceState::Stopping) {
+                        let _ = runtime.engine.advertising_stopped(id);
+                        slot.stop_advertising_ready = false;
+                    } else {
+                        let _ = runtime.engine.advertising_started(id, Err(error));
+                    }
+                    Some((
+                        id,
+                        scan_state == Ok(ResourceState::Stopping),
+                        adv_state == Ok(ResourceState::Stopping),
+                    ))
+                })() else {
+                    continue;
+                };
+                if stop_scan {
+                    runtime.complete_operation(id.0, qjs::OP_STOP_SCAN, Ok(()));
+                }
+                if stop_advertising {
+                    runtime.complete_operation(id.0, qjs::OP_STOP_ADVERTISING, Ok(()));
+                }
+                runtime.complete_operation(id.0, qjs::OP_START_SCAN, Err(error));
+                runtime.complete_operation(id.0, qjs::OP_START_ADVERTISING, Err(error));
+            }
+        }
         backend::Event::Registered { session, spsm } => {
             if let Some(slot) = runtime.slot_mut(session) {
                 slot.spsm = spsm;
@@ -815,6 +906,7 @@ fn apply_event(
         backend::Event::Failed {
             session,
             link,
+            operation,
             error,
         } => {
             if let Some(link) = link {
@@ -824,16 +916,79 @@ fn apply_event(
                     }
                 }
                 let _ = runtime.engine.close_link(link, error);
-            } else {
+            } else if error == Error::NotReady && matches!(operation, 1 | 3) {
+                // GAP may have enabled an OFF adapter. Keep the original
+                // request pending until a later owner drain observes ON.
                 if let Some(slot) = runtime.slot_mut(session) {
-                    if slot.closing {
-                        slot.close_submitted = false;
+                    if operation == 1 {
+                        slot.scan_ready = true;
+                    } else {
+                        slot.advertising_ready = true;
                     }
                 }
-                // Session-level Bluelet work is Register or Close. GAP start/
-                // stop errors have their own callbacks or synchronous result.
-                runtime.complete_operation(session.0, qjs::OP_START_ADVERTISING, Err(error));
-                let _ = runtime.engine.advertising_started(session, Err(error));
+            } else {
+                match operation {
+                    1 => {
+                        if runtime.engine.session(session).map(|session| session.scan)
+                            == Ok(ResourceState::Stopping)
+                        {
+                            let _ = runtime.engine.scan_stopped(session);
+                            if let Some(slot) = runtime.slot_mut(session) {
+                                slot.stop_scan_ready = false;
+                            }
+                            runtime.complete_operation(session.0, qjs::OP_STOP_SCAN, Ok(()));
+                        } else {
+                            let _ = runtime.engine.scan_started(session, Err(error));
+                        }
+                        runtime.complete_operation(session.0, qjs::OP_START_SCAN, Err(error));
+                    }
+                    2 => {
+                        if let Some(slot) = runtime.slot_mut(session) {
+                            slot.stop_scan_ready = true;
+                        }
+                        runtime.complete_operation(session.0, qjs::OP_STOP_SCAN, Err(error));
+                    }
+                    3 => {
+                        if runtime
+                            .engine
+                            .session(session)
+                            .map(|session| session.advertising)
+                            == Ok(ResourceState::Stopping)
+                        {
+                            let _ = runtime.engine.advertising_stopped(session);
+                            if let Some(slot) = runtime.slot_mut(session) {
+                                slot.stop_advertising_ready = false;
+                            }
+                            runtime.complete_operation(session.0, qjs::OP_STOP_ADVERTISING, Ok(()));
+                        } else {
+                            let _ = runtime.engine.advertising_started(session, Err(error));
+                        }
+                        runtime.complete_operation(
+                            session.0,
+                            qjs::OP_START_ADVERTISING,
+                            Err(error),
+                        );
+                    }
+                    4 => {
+                        if let Some(slot) = runtime.slot_mut(session) {
+                            slot.stop_advertising_ready = true;
+                        }
+                        runtime.complete_operation(session.0, qjs::OP_STOP_ADVERTISING, Err(error));
+                    }
+                    _ => {
+                        if let Some(slot) = runtime.slot_mut(session) {
+                            if slot.closing {
+                                slot.close_submitted = false;
+                            }
+                        }
+                        runtime.complete_operation(
+                            session.0,
+                            qjs::OP_START_ADVERTISING,
+                            Err(error),
+                        );
+                        let _ = runtime.engine.advertising_started(session, Err(error));
+                    }
+                }
             }
         }
         backend::Event::ServiceClosed { session } => {
@@ -863,6 +1018,28 @@ fn apply_event(
     incoming
 }
 fn receive(event: backend::Event<'_>) {
+    let event_stage = match event {
+        backend::Event::Registered { .. } => 140,
+        backend::Event::ScanStarted { .. } => 141,
+        backend::Event::ScanStopped { .. } => 142,
+        backend::Event::AdvertisingStarted { .. } => 143,
+        backend::Event::AdvertisingStopped { .. } => 144,
+        backend::Event::ServiceClosed { .. } => 145,
+        backend::Event::Submitted { .. } => 146,
+        backend::Event::Closed { .. } => 147,
+        backend::Event::Failed { .. } => 148,
+        backend::Event::Incoming { .. } => 149,
+        backend::Event::Assigned { .. } => 150,
+        backend::Event::Opened { .. } => 151,
+        backend::Event::Data { .. } => 152,
+        backend::Event::Advertisement { .. } => 153,
+        backend::Event::Credits { .. } => 154,
+        backend::Event::ClientReady => 155,
+        backend::Event::ClientFailed { .. } => 156,
+    };
+    unsafe {
+        qjs::trace(event_stage);
+    }
     let incoming = locked(|runtime| apply_event(runtime, event));
     if let Some((service, request, link)) = incoming {
         match link {
@@ -896,11 +1073,18 @@ fn next_work(runtime: &mut Runtime) -> Work {
             slot.stop_scan_ready = false;
             return Work::StopScan(service);
         }
+        if slot.scan_ready && !slot.closing && backend::client_ready() {
+            unsafe {
+                crate::qjs::trace(190);
+            }
+            slot.scan_ready = false;
+            return Work::Scan(service);
+        }
         if slot.stop_advertising_ready && !slot.closing {
             slot.stop_advertising_ready = false;
             return Work::StopAdvertising(service);
         }
-        if slot.advertising_ready && !slot.closing {
+        if slot.advertising_ready && !slot.closing && backend::client_ready() {
             slot.advertising_ready = false;
             if let Ok(session) = runtime.engine.session(slot.id) {
                 if session.advertising != ResourceState::Starting {
@@ -963,6 +1147,10 @@ fn pump() {
             break;
         }
         if let Err(error) = perform(work) {
+            unsafe {
+                qjs::trace(160);
+                qjs::trace(error_code(error) as u32);
+            }
             locked(|runtime| match work {
                 Work::Send(_, tx) => {
                     for slot in &mut runtime.transmitting {
@@ -992,11 +1180,33 @@ fn pump() {
                     }
                 }
                 Work::Advertise(id, _, _, _) => {
-                    if let Some(slot) = runtime.slot_mut(id) {
-                        slot.advertising_launching = false;
+                    if error == Error::NotReady {
+                        if let Some(slot) = runtime.slot_mut(id) {
+                            slot.advertising_ready = true;
+                        }
+                    } else {
+                        if let Some(slot) = runtime.slot_mut(id) {
+                            slot.advertising_launching = false;
+                        }
+                        let _ = runtime.engine.advertising_started(id, Err(error));
+                        runtime.complete_operation(id.0, qjs::OP_START_ADVERTISING, Err(error));
                     }
-                    let _ = runtime.engine.advertising_started(id, Err(error));
-                    runtime.complete_operation(id.0, qjs::OP_START_ADVERTISING, Err(error));
+                }
+                Work::Scan(service) => {
+                    let mut failed = None;
+                    for slot in runtime.slots.iter_mut().flatten() {
+                        if slot.service == Some(service) {
+                            if error == Error::NotReady {
+                                slot.scan_ready = true;
+                            } else {
+                                failed = Some(slot.id);
+                            }
+                        }
+                    }
+                    if let Some(id) = failed {
+                        let _ = runtime.engine.scan_started(id, Err(error));
+                        runtime.complete_operation(id.0, qjs::OP_START_SCAN, Err(error));
+                    }
                 }
                 Work::StopScan(service) | Work::StopAdvertising(service) => {
                     for slot in runtime.slots.iter_mut().flatten() {
@@ -1053,6 +1263,9 @@ fn next_event(owner: u32, output: &mut qjs::Event) -> bool {
             .iter()
             .position(|event| event.is_some_and(|event| event.owner == owner))
         {
+            unsafe {
+                qjs::trace(170);
+            }
             let event = runtime.events[index].take().unwrap();
             // Compact to preserve FIFO across reused slots.
             runtime.events[index..].rotate_left(1);
@@ -1158,6 +1371,7 @@ unsafe extern "C" fn timeout_tick(ctx: *const ContextV1, _: i32, _: *mut c_void)
     // The Supervisor's ordinary background task is allowed to issue GAP IPC.
     // This timer supplies deadlines and retries resources held during shutdown;
     // Bluetooth events themselves wake the QJS task immediately through notify.
+    // Client construction is queued by actual GAP operations, not polled.
     pump();
     wake_owners();
 }
@@ -1228,11 +1442,78 @@ mod tests {
             advertising_ready: false,
             advertising_launching: false,
             stop_scan_ready: false,
+            scan_ready: false,
             stop_advertising_ready: false,
             closing: false,
             close_submitted: false,
         });
         id
+    }
+
+    #[test]
+    fn adapter_startup_keeps_the_original_request_until_gap_callback() {
+        for advertising in [false, true] {
+            let mut runtime = Runtime::new();
+            let id = session(&mut runtime, 7, "chat");
+            let operation = if advertising {
+                runtime.engine.begin_advertising(id).unwrap();
+                qjs::OP_START_ADVERTISING
+            } else {
+                runtime.engine.begin_scan(id, false).unwrap();
+                qjs::OP_START_SCAN
+            };
+            runtime
+                .reserve(Request {
+                    owner: 7,
+                    operation,
+                    handle: id.0,
+                    session: id,
+                    token: 91,
+                    send: None,
+                    completed: None,
+                })
+                .unwrap();
+            apply_event(
+                &mut runtime,
+                backend::Event::Failed {
+                    session: id,
+                    link: None,
+                    operation: if advertising { 3 } else { 1 },
+                    error: Error::NotReady,
+                },
+            );
+            assert_eq!(runtime.pending.iter().flatten().count(), 1);
+            assert_eq!(runtime.events.iter().flatten().count(), 0);
+            let slot = runtime.slot_mut(id).unwrap();
+            assert!(if advertising {
+                slot.advertising_ready
+            } else {
+                slot.scan_ready
+            });
+            apply_event(
+                &mut runtime,
+                if advertising {
+                    backend::Event::AdvertisingStarted {
+                        session: id,
+                        status: 0,
+                    }
+                } else {
+                    backend::Event::ScanStarted {
+                        session: id,
+                        status: 0,
+                    }
+                },
+            );
+            assert_eq!(runtime.pending.iter().flatten().count(), 0);
+            assert!(runtime.events.iter().flatten().any(|event| matches!(
+                event.notice,
+                Notice::Complete {
+                    token: 91,
+                    error: None,
+                    ..
+                }
+            )));
+        }
     }
 
     #[test]
@@ -1439,6 +1720,7 @@ mod tests {
             backend::Event::Failed {
                 session: id,
                 link: None,
+                operation: 0,
                 error: Error::Busy,
             },
         );
@@ -1469,6 +1751,7 @@ mod tests {
             backend::Event::Failed {
                 session: id,
                 link: None,
+                operation: 0,
                 error: Error::Busy,
             },
         );

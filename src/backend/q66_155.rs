@@ -13,10 +13,25 @@ const RECEIVE_MPS: u16 = 64;
 const INITIAL_CREDITS: u16 = 5;
 const STARTING: usize = 1;
 const OWNER: usize = 0x200be890;
-// MiWear's process-lifetime IPC client; no adapter callback table is replaced.
+// Process-lifetime GAP client created by firmware boot at C7F6C60.
 const ADAPTER: usize = 0x200da4f8;
 static SINK: AtomicUsize = AtomicUsize::new(0);
+static CLIENT: AtomicUsize = AtomicUsize::new(0);
+static CLIENT_STARTING: AtomicUsize = AtomicUsize::new(0);
+static ADAPTER_REGISTERED: AtomicUsize = AtomicUsize::new(0);
 static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
+
+extern "C" fn adapter_state_changed(_: usize, _: i32) {}
+// Only state changes are needed. Pairing and connection callbacks stay stock.
+#[repr(C)]
+struct AdapterCallbacks {
+    state: Option<extern "C" fn(usize, i32)>,
+    reserved: [Option<unsafe extern "C" fn()>; 15],
+}
+static ADAPTER_CALLBACKS: AdapterCallbacks = AdapterCallbacks {
+    state: Some(adapter_state_changed),
+    reserved: [None; 15],
+};
 
 #[derive(Clone, Copy)]
 struct Channel {
@@ -225,12 +240,15 @@ pub fn install(sink: EventSink) -> Result<(), Error> {
     if !supported() {
         return Err(Error::Unsupported);
     }
-    let pointer = sink as usize;
-    match SINK.compare_exchange(0, pointer, Ordering::AcqRel, Ordering::Acquire) {
-        Ok(_) => Ok(()),
-        Err(existing) if existing == pointer => Ok(()),
-        Err(_) => Err(Error::Busy),
+    let sink_pointer = sink as usize;
+    match SINK.compare_exchange(0, sink_pointer, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {}
+        Err(existing) if existing == sink_pointer => {}
+        Err(_) => return Err(Error::Busy),
     }
+    // Do not open the GAP socket during Supervisor activation: Bluelet's
+    // server may not be ready yet. Construction is deferred to first use.
+    Ok(())
 }
 pub fn acquire(id: SessionId) -> Result<Service, Error> {
     if !supported() || SINK.load(Ordering::Acquire) == 0 {
@@ -255,21 +273,88 @@ pub fn acquire(id: SessionId) -> Result<Service, Error> {
     Err(Error::Busy)
 }
 
+pub fn client_ready() -> bool {
+    CLIENT.load(Ordering::Acquire) != 0
+}
+
+pub fn ensure_client() -> Result<(), Error> {
+    if client_ready() {
+        return Ok(());
+    }
+    if CLIENT_STARTING.swap(1, Ordering::AcqRel) != 0 {
+        // The first caller publishes either ClientReady or ClientFailed. All
+        // deferred sessions are woken by that outcome; none waits silently.
+        return Ok(());
+    }
+    let result = (|| {
+        // Firmware boot creates this process-lifetime client and its response
+        // loop. Creating a second client would duplicate the IPC identity and
+        // can block while starting another loop. We only add our own callback
+        // registration; the stock callback table remains untouched.
+        let client = unsafe { pointer(ADAPTER) };
+        if client == 0 {
+            return Err(Error::NotReady);
+        }
+        if ADAPTER_REGISTERED.load(Ordering::Acquire) == 0 {
+            let registration = unsafe {
+                fw!(
+                    0xc46a38e,
+                    unsafe extern "C" fn(usize, *const usize) -> usize,
+                    client,
+                    (&ADAPTER_CALLBACKS as *const AdapterCallbacks).cast()
+                )
+            };
+            if registration == 0 {
+                return Err(Error::Busy);
+            }
+            ADAPTER_REGISTERED.store(registration, Ordering::Release);
+        }
+        match CLIENT.compare_exchange(0, client, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => {}
+            Err(existing) if existing == client => {}
+            Err(_) => return Err(Error::Busy),
+        }
+        Ok(())
+    })();
+    CLIENT_STARTING.store(0, Ordering::Release);
+    match result {
+        Ok(()) => emit(Event::ClientReady),
+        Err(error) => emit(Event::ClientFailed { error }),
+    }
+    result
+}
+
 fn adapter() -> Result<usize, Error> {
-    let adapter = unsafe { pointer(ADAPTER) };
+    let adapter = CLIENT.load(Ordering::Acquire);
     if adapter == 0 {
         return Err(Error::Busy);
     }
+    unsafe {
+        crate::qjs::trace(adapter as u32);
+        crate::qjs::trace(ptr::read_unaligned((adapter + 48) as *const i32) as u32);
+    }
     let state = unsafe { fw!(0xc46a44c, unsafe extern "C" fn(usize) -> i32, adapter) };
+    unsafe {
+        crate::qjs::trace(200 + state as u32);
+    }
+    if state == 0 {
+        let result = unsafe { fw!(0xc905902, unsafe extern "C" fn(usize) -> i32, adapter) };
+        unsafe {
+            crate::qjs::trace(result as u32);
+        }
+        if result != 0 {
+            return Err(Error::Backend(result));
+        }
+    }
     if state != 4 {
-        return Err(Error::Busy);
+        return Err(Error::NotReady);
     }
     Ok(adapter)
 }
 
 /// Invoke GAP methods from a normal module/QJS worker, outside the runtime lock.
 /// They synchronously await firmware IPC; never call them from a BLE callback.
-pub fn start_scan(service: Service) -> Result<(), Error> {
+fn start_scan_owner(service: Service) -> Result<(), Error> {
     let _operation = pin(service, false)?;
     let state = valid(service, false)?;
     let adapter = adapter()?;
@@ -290,6 +375,9 @@ pub fn start_scan(service: Service) -> Result<(), Error> {
         )
     };
     if handle == 0 {
+        unsafe {
+            crate::qjs::trace(210);
+        }
         state
             .scan
             .compare_exchange(STARTING, 0, Ordering::AcqRel, Ordering::Acquire)
@@ -303,7 +391,7 @@ pub fn start_scan(service: Service) -> Result<(), Error> {
         .ok();
     Ok(())
 }
-pub fn stop_scan(service: Service) -> Result<(), Error> {
+fn stop_scan_owner(service: Service) -> Result<(), Error> {
     let _operation = pin(service, true)?;
     let state = valid(service, true)?;
     let handle = state.scan.load(Ordering::Acquire);
@@ -316,7 +404,7 @@ pub fn stop_scan(service: Service) -> Result<(), Error> {
     if state.scan_stopping.swap(1, Ordering::AcqRel) != 0 {
         return Ok(());
     }
-    let adapter = unsafe { pointer(ADAPTER) };
+    let adapter = CLIENT.load(Ordering::Acquire);
     let result = unsafe {
         fw!(
             0xc46b730,
@@ -331,7 +419,7 @@ pub fn stop_scan(service: Service) -> Result<(), Error> {
     }
     Ok(())
 }
-pub fn start_advertising(service: Service, data: &[u8]) -> Result<(), Error> {
+fn start_advertising_owner(service: Service, data: &[u8]) -> Result<(), Error> {
     let _operation = pin(service, false)?;
     if data.len() > 31 || data.is_empty() {
         return Err(Error::InvalidArgument);
@@ -384,7 +472,7 @@ pub fn start_advertising(service: Service, data: &[u8]) -> Result<(), Error> {
         .ok();
     Ok(())
 }
-pub fn stop_advertising(service: Service) -> Result<(), Error> {
+fn stop_advertising_owner(service: Service) -> Result<(), Error> {
     let _operation = pin(service, true)?;
     let state = valid(service, true)?;
     let handle = state.advertising.load(Ordering::Acquire);
@@ -397,7 +485,7 @@ pub fn stop_advertising(service: Service) -> Result<(), Error> {
     if state.adv_stopping.swap(1, Ordering::AcqRel) != 0 {
         return Ok(());
     }
-    let adapter = unsafe { pointer(ADAPTER) };
+    let adapter = CLIENT.load(Ordering::Acquire);
     let result = unsafe {
         fw!(
             0xc46b664,
@@ -627,6 +715,12 @@ const COC_CALLBACKS: [extern "C" fn(u32, *mut u8) -> i32; SLOTS] = [coc0, coc1, 
 
 #[derive(Clone, Copy)]
 enum Action {
+    StartScan,
+    StopScan,
+    StartAdvertising {
+        length: u8,
+    },
+    StopAdvertising,
     Register,
     Connect {
         link: LinkId,
@@ -647,7 +741,12 @@ enum Action {
     },
     Close,
 }
+#[repr(C)]
 struct Work {
+    // Firmware uv__work: worker, done, loop, and two queue pointers.
+    // libuv owns these 20 bytes until it invokes the done callback.
+    #[allow(dead_code)]
+    work_prefix: [u32; 5],
     service: Service,
     action: Action,
     data: [u8; RECEIVE_MTU as usize],
@@ -655,7 +754,10 @@ struct Work {
 fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> {
     let state = valid(
         service,
-        matches!(action, Action::Close | Action::Disconnect { .. }),
+        matches!(
+            action,
+            Action::Close | Action::Disconnect { .. } | Action::StopScan | Action::StopAdvertising
+        ),
     )?;
     let owner = unsafe { pointer(OWNER) };
     if owner == 0 {
@@ -669,7 +771,10 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         .map_err(|_| Error::Busy)?;
     if let Err(error) = valid(
         service,
-        matches!(action, Action::Close | Action::Disconnect { .. }),
+        matches!(
+            action,
+            Action::Close | Action::Disconnect { .. } | Action::StopScan | Action::StopAdvertising
+        ),
     ) {
         state.work.fetch_sub(1, Ordering::AcqRel);
         retire(service.slot as usize);
@@ -684,6 +789,7 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         ptr::write(
             work,
             Work {
+                work_prefix: [0; 5],
                 service,
                 action,
                 data: [0; RECEIVE_MTU as usize],
@@ -691,6 +797,47 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         );
         (&mut (*work).data)[..bytes.len()].copy_from_slice(bytes);
     }
+    if matches!(
+        action,
+        Action::StartScan
+            | Action::StopScan
+            | Action::StartAdvertising { .. }
+            | Action::StopAdvertising
+    ) {
+        let client = CLIENT.load(Ordering::Acquire);
+        let business_loop = if client == 0 {
+            0
+        } else {
+            unsafe { pointer(client + 56) }
+        };
+        if business_loop == 0 {
+            unsafe { free(work.cast()) };
+            state.work.fetch_sub(1, Ordering::AcqRel);
+            return Err(Error::NotReady);
+        }
+        // Use the existing lock-protected work-completion queue. Only the
+        // no-op runs on a pool worker; the done callback runs on the business
+        // loop in the client's fd group. No foreign uv handle initialization.
+        unsafe {
+            fw!(
+                0xc3f4cc4,
+                unsafe extern "C" fn(
+                    usize,
+                    *mut Work,
+                    u32,
+                    extern "C" fn(*mut Work),
+                    extern "C" fn(*mut Work, i32),
+                ),
+                business_loop,
+                work,
+                0,
+                gap_prepare,
+                gap_done
+            );
+        }
+        return Ok(());
+    }
+    // CoC requests use Bluelet's owner.
     // The return value is a semaphore operation, not an acceptance status.
     // Failure/cancellation goes through cancel_work, including owner shutdown.
     unsafe {
@@ -711,6 +858,35 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         );
     }
     Ok(())
+}
+pub fn start_scan(service: Service) -> Result<(), Error> {
+    enqueue(service, Action::StartScan, &[])
+}
+pub fn stop_scan(service: Service) -> Result<(), Error> {
+    let state = valid(service, true)?;
+    if state.scan.load(Ordering::Acquire) == 0 {
+        return Ok(());
+    }
+    enqueue(service, Action::StopScan, &[])
+}
+pub fn start_advertising(service: Service, data: &[u8]) -> Result<(), Error> {
+    if data.len() > 31 || data.is_empty() {
+        return Err(Error::InvalidArgument);
+    }
+    enqueue(
+        service,
+        Action::StartAdvertising {
+            length: data.len() as u8,
+        },
+        data,
+    )
+}
+pub fn stop_advertising(service: Service) -> Result<(), Error> {
+    let state = valid(service, true)?;
+    if state.advertising.load(Ordering::Acquire) == 0 {
+        return Ok(());
+    }
+    enqueue(service, Action::StopAdvertising, &[])
 }
 pub fn register(service: Service) -> Result<(), Error> {
     enqueue(service, Action::Register, &[])
@@ -790,6 +966,35 @@ pub fn close(service: Service) -> Result<(), Error> {
     enqueue(service, Action::Close, &[])?;
     scan.and(advertising)
 }
+extern "C" fn gap_prepare(_: *mut Work) {}
+extern "C" fn gap_done(work: *mut Work, status: i32) {
+    if work.is_null() {
+        return;
+    }
+    unsafe {
+        let service = (*work).service;
+        let stopping = matches!((*work).action, Action::StopScan | Action::StopAdvertising);
+        let result = if status != 0 {
+            Err(Error::Backend(status))
+        } else if let Err(error) = valid(service, stopping) {
+            Err(error)
+        } else {
+            perform(pointer(OWNER), &*work)
+        };
+        if let Err(error) = result {
+            emit(Event::Failed {
+                session: service.session,
+                link: None,
+                operation: failure_operation((*work).action),
+                error,
+            });
+        }
+        let index = service.slot as usize;
+        free(work.cast());
+        STATE[index].work.fetch_sub(1, Ordering::AcqRel);
+        retire(index);
+    }
+}
 extern "C" fn cancel_work(_: usize, reason: u32, work: *mut Work) -> i32 {
     if work.is_null() {
         return 0;
@@ -797,6 +1002,7 @@ extern "C" fn cancel_work(_: usize, reason: u32, work: *mut Work) -> i32 {
     unsafe {
         let service = (*work).service;
         let link = action_link((*work).action);
+        let operation = failure_operation((*work).action);
         if let Action::Disconnect { link } = (*work).action {
             emit(Event::Closed {
                 link,
@@ -808,6 +1014,7 @@ extern "C" fn cancel_work(_: usize, reason: u32, work: *mut Work) -> i32 {
         emit(Event::Failed {
             session: service.session,
             link,
+            operation,
             error: Error::Backend(reason as i32),
         });
         STATE[service.slot as usize]
@@ -816,6 +1023,15 @@ extern "C" fn cancel_work(_: usize, reason: u32, work: *mut Work) -> i32 {
         retire(service.slot as usize);
     }
     0
+}
+fn failure_operation(action: Action) -> u8 {
+    match action {
+        Action::StartScan => 1,
+        Action::StopScan => 2,
+        Action::StartAdvertising { .. } => 3,
+        Action::StopAdvertising => 4,
+        _ => 0,
+    }
 }
 fn action_link(action: Action) -> Option<LinkId> {
     match action {
@@ -850,6 +1066,7 @@ extern "C" fn run_work(owner: usize, _: u32, work: *mut Work) -> i32 {
             emit(Event::Failed {
                 session: service.session,
                 link: action_link((*work).action),
+                operation: failure_operation((*work).action),
                 error,
             });
         }
@@ -919,6 +1136,7 @@ unsafe fn cancel_pending(work: *mut Work) {
     emit(Event::Failed {
         session: service.session,
         link: action_link((*work).action),
+        operation: 0,
         error: Error::Disconnected,
     });
     free(work.cast());
@@ -939,25 +1157,26 @@ unsafe fn request() -> Result<*mut u8, Error> {
         Ok(p)
     }
 }
-unsafe fn disconnect_cid(owner: usize, cid: u16) -> Result<(), Error> {
-    let p = alloc(4);
-    if p.is_null() {
-        return Err(Error::Busy);
+unsafe fn disconnect_cid(_owner: usize, cid: u16) -> Result<(), Error> {
+    // Exactly the policy called by C872EBC after its channel lookup. Invoke it
+    // on the same owner without allocating a throwaway four-byte IPC request,
+    // so module heap pressure cannot prevent a queued disconnect from running.
+    let channel = fw!(0xc86d8d0, unsafe extern "C" fn(usize, u16) -> usize, 0, cid);
+    if channel != 0 {
+        fw!(0xc872dc0, unsafe extern "C" fn(usize, u16), channel, 9);
     }
-    put_word(p, 0, cid);
-    fw!(
-        0xc872ebc,
-        unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
-        owner,
-        1,
-        p
-    );
     Ok(())
 }
 unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
     let index = work.service.slot as usize;
     let state = &STATE[index];
     match work.action {
+        Action::StartScan => start_scan_owner(work.service)?,
+        Action::StopScan => stop_scan_owner(work.service)?,
+        Action::StartAdvertising { length } => {
+            start_advertising_owner(work.service, &work.data[..length as usize])?
+        }
+        Action::StopAdvertising => stop_advertising_owner(work.service)?,
         Action::Register => {
             if state.psm.load(Ordering::Acquire) != 0 {
                 return Err(Error::Busy);
@@ -993,6 +1212,19 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
             if !(*state.owner.get()).channels.iter().any(|c| c.cid == 0) {
                 return Err(Error::Busy);
             }
+            // The stock allocator loops over the shared LE CID range until
+            // something is free; exhaustion otherwise spins the owner forever.
+            // No other owner work can consume a CID between this and connect.
+            let mut cid_available = false;
+            for cid in 0x40u16..=0x7f {
+                if fw!(0xc86d8d0, unsafe extern "C" fn(usize, u16) -> usize, 0, cid) == 0 {
+                    cid_available = true;
+                    break;
+                }
+            }
+            if !cid_available {
+                return Err(Error::Busy);
+            }
             let p = request()?;
             put_word(p, 2, psm as u16);
             *p.add(8) = 1;
@@ -1011,6 +1243,19 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                 p
             );
             (*state.owner.get()).connecting = None;
+            // close() can arrive on another task while the owner handler is
+            // running. Its event2 callback must not destroy a channel that the
+            // handler still uses after that callback returns.
+            if state.closing.load(Ordering::Acquire) != 0 {
+                if let Some(cid) = (*state.owner.get())
+                    .channels
+                    .iter()
+                    .find(|channel| channel.link == Some(link))
+                    .map(|channel| channel.cid)
+                {
+                    disconnect_cid(owner, cid)?;
+                }
+            }
         }
         Action::Accept {
             request: token,
@@ -1021,10 +1266,24 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
                 .iter_mut()
                 .find(|c| c.cid != 0 && c.request == token.0)
                 .ok_or(Error::Disconnected)?;
-            let p = request()?;
+            // Bind before the fallible allocation: Failed(link) must leave a
+            // discoverable native channel for the runtime's disconnect(link).
+            channel.link = link;
+            let p = match request() {
+                Ok(request) => request,
+                Err(_) if link.is_none() => {
+                    // A rejected incoming channel has no LinkId for the runtime
+                    // to clean up. Disconnect its CID on this owner task instead
+                    // of emitting a session-level Failed(None).
+                    let cid = channel.cid;
+                    channel.request = 0;
+                    disconnect_cid(owner, cid)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             put_word(p, 0, channel.cid);
             put_word(p, 4, if link.is_some() { 0 } else { 4 });
-            channel.link = link;
             channel.request = 0;
             config(p);
             fw!(
@@ -1223,23 +1482,22 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                     emit(Event::Assigned { link, cid });
                 }
             }
-            if vacant.is_none() || state.closing.load(Ordering::Acquire) != 0 {
-                if event == 1 {
-                    put_word(p, 4, 4);
-                    config(p);
-                    fw!(
-                        0xc873020,
-                        unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
-                        owner,
-                        1,
-                        p
-                    );
-                    retire(index);
-                    return;
-                } else {
-                    let _ = disconnect_cid(owner, cid);
-                }
+            if (vacant.is_none() || state.closing.load(Ordering::Acquire) != 0) && event == 1 {
+                put_word(p, 4, 4);
+                config(p);
+                fw!(
+                    0xc873020,
+                    unsafe extern "C" fn(usize, u32, *mut u8) -> i32,
+                    owner,
+                    1,
+                    p
+                );
+                retire(index);
+                return;
             }
+            // event2 is a synchronous notification inside C871558. Leave
+            // its live channel intact until the owner handler returns;
+            // perform(Connect) handles a concurrent close immediately then.
         }
         3 => {
             let cid = word(p, 108);
@@ -1301,6 +1559,7 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                             emit(Event::Failed {
                                 session: session(index),
                                 link: Some(link),
+                                operation: 0,
                                 error: Error::ReceiveOverflow,
                             });
                             let _ = disconnect_cid(owner, cid);
@@ -1318,7 +1577,12 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
-        _ => { /* unused classic/enhanced events still transfer the allocation */ }
+        8 => {
+            // C86DA74 emits a separately allocated six-byte local flow report.
+            // Legacy LE submission is governed by event17 credits; this event
+            // changes neither connection state nor responsibility for an SDU.
+        }
+        _ => { /* no event4/5 producer exists in this legacy LE channel path */ }
     }
     if event == 17 {
         resume_send(index, word(p, 0));

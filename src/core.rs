@@ -21,6 +21,7 @@ pub enum Error {
     Disconnected,
     ReceiveOverflow,
     Backend(i32),
+    NotReady,
 }
 
 impl Error {
@@ -33,6 +34,7 @@ impl Error {
             Self::Disconnected => "DISCONNECTED",
             Self::ReceiveOverflow => "RECEIVE_OVERFLOW",
             Self::Backend(_) => "BACKEND_ERROR",
+            Self::NotReady => "BUSY",
         }
     }
 }
