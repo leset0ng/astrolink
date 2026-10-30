@@ -80,10 +80,35 @@ What is missing is not addresses, it is the contract:
   unlock primitive could not be isolated, so the module's async-handle lifetime
   has no verified implementation.
 
+A registered Feature needs the host's registry, and the host creates it per app:
+
+```
+host object (AIOTJS/ferry, from 0xC911306)
+  -> feature_registry_create 0xC8660E4(host)      24-byte registry
+  -> feature_framework_init 0xC86E764(registry, *(host+12))
+  -> feature_register_all 0xC892BC4(registry)
+  -> 28 twelve-byte thunks: feature_register_feature 0xC862898(registry, &descriptor)
+```
+
+`feature_register_feature` refuses a null registry, and the registry is never a
+global, so **a native module cannot register itself on P67**. The module's shape
+there has to be "receive the host's registry pointer and publish a static
+descriptor thunk", not Band 11's "take over the framework vtables and become the
+Application provider". That is the second integration, and it is the only route:
+there is no shortcut through the JS context.
+
+What is known for that route: the `JSClassID` global (`dword_2013CE38`) is
+assigned lazily by `ensureJsClass 0xC867040` before any Feature object exists, so
+reading it inside a module callback is safe; the manager table is `0xCDA2CD0`
+(slots `+0x1C` require, `+0x20` find, `+0x24` create, `+0x2C` uninit, prefix five
+words); the framework implementation names itself `_pImpl->render_.loop / .stop /
+.event / .async_del_app` in its own assertion strings (`0xcc9f348`, `0xcc9f3dc`,
+`0xcc9f9b8`), which is the lead for finding the singleton and its vtable.
+
 So P67 is where Band 9/10 are not: the pieces exist and the addresses are
-evidenced. Finishing it means writing a **second integration** — registration
-through `ferry`, its own send/receive shims, and a teardown path — not filling in
-offsets.
+evidenced. Finishing it means writing a **second integration** — a host-side
+registration path, its own send/receive shims, and a teardown path (`uv_close`
+remains unlocated) — not filling in offsets.
 
 ## What stops the P67 module
 
