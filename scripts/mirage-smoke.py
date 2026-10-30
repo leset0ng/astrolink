@@ -174,6 +174,22 @@ def capture_ramlog(runtime, output, redactor, base, size):
     return {'base': hex(base), 'windowBytes': size, 'timestampLines': len(lines), 'output': str(destination)}
 
 
+def capture_nsh_log(device, output, redactor, miragectl, library, limit):
+    """Capture the firmware log through a working NSH, as on p67."""
+    result = subprocess.run(
+        [str(miragectl.expanduser().resolve()), 'sh', device, 'dmesg'],
+        env=dict(os.environ, MIRAGE_LIBRARY=str(library.expanduser().resolve())),
+        capture_output=True, text=True, timeout=20,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or 'NSH dmesg failed')
+    destination = output / 'guest-logs' / 'nsh-syslog.log'
+    destination.parent.mkdir(exist_ok=True)
+    tail = result.stdout.encode('utf-8')[-limit:].decode('utf-8', errors='replace')
+    destination.write_text(redactor.text(tail))
+    return {'output': str(destination), 'tailLimitBytes': limit}
+
+
 def probe_result(log_path):
     """Require an actual terminal probe event, not only launch acknowledgement."""
     events = []
@@ -207,6 +223,8 @@ def parser():
     p.add_argument('--timeout', type=float, default=60)
     p.add_argument('--settle', type=float, default=2, help='seconds before final screenshot/log capture')
     p.add_argument('--log-bytes', type=int, default=262144, help='maximum tail bytes per existing guest log')
+    p.add_argument('--probe-log-source', choices=['ram', 'nsh'], default='ram',
+                   help='probe terminal events from a measured RAM window or a working NSH dmesg')
     p.add_argument('--ram-log-base', type=lambda value: int(value, 0), help='optional exact RAM log window address, e.g. 0x20100000 on current Q66 .155')
     p.add_argument('--ram-log-bytes', type=int, default=65536, help='RAM log window bytes (1..262144), only with --ram-log-base')
     commands = p.add_subparsers(dest='command', required=True)
@@ -233,7 +251,7 @@ def parser():
 def main():
     p = parser()
     args = p.parse_args()
-    if args.command == 'probe' and args.ram_log_base is None:
+    if args.command == 'probe' and args.probe_log_source == 'ram' and args.ram_log_base is None:
         # The native backend is pinned to Q66 .155; use its observed live ring.
         args.ram_log_base = 0x20100000
         args.ram_log_bytes = 65536
@@ -344,16 +362,28 @@ def main():
         if args.ram_log_base is not None:
             try:
                 summary['ramLog'] = capture_ramlog(runtime, output, redactor, args.ram_log_base, args.ram_log_bytes)
-                if args.command == 'probe':
+                if args.command == 'probe' and args.probe_log_source == 'ram':
                     summary['probe'] = probe_result(Path(summary['ramLog']['output']))
                     if not summary['probe']['passed']:
                         summary['ok'] = False
                         summary['error'] = 'Native probe failed or no terminal completion event was captured'
             except Exception as error:
                 summary['ramLogError'] = redactor.text(str(error))
-                if args.command == 'probe':
+                if args.command == 'probe' and args.probe_log_source == 'ram':
                     summary['ok'] = False
                     summary['error'] = 'Native probe result could not be captured'
+        if args.command == 'probe' and args.probe_log_source == 'nsh':
+            try:
+                summary['nshLog'] = capture_nsh_log(
+                    record['name'], output, redactor, args.miragectl, args.library, args.log_bytes)
+                summary['probe'] = probe_result(Path(summary['nshLog']['output']))
+                if not summary['probe']['passed']:
+                    summary['ok'] = False
+                    summary['error'] = 'Native probe failed or no terminal completion event was captured'
+            except Exception as error:
+                summary['ok'] = False
+                summary['error'] = 'Native probe result could not be captured'
+                summary['nshLogError'] = redactor.text(str(error))
         # Preserve file digests in summary for reproducibility; logs conservatively redact long hex strings.
         (output / 'summary.json').write_text(json.dumps(redactor.object(summary), ensure_ascii=False, indent=2) + '\n')
         print(json.dumps({'ok': summary['ok'], 'evidence': str(output), 'screenshot': summary.get('screenshot')}, ensure_ascii=False))
