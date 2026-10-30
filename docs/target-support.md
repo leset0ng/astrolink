@@ -65,12 +65,16 @@ resident bytes and 1,244 relocations, which is expected: one code image,
 different addresses. The 18-check native lifecycle probe passes on the Q66
 `.155` device (`docs/native-validation.md`) and on the Q66 `.179` device.
 
-`.139` is adapted but not probed. Its own loader pack is still
-`STATIC_TEST_CANDIDATE` / `NOT_PROBED` (`targets/xiaomi-band-11-4.100.139/loader`),
-and in Mirage its Supervisor never answered on either boot: the installer reports
-`Run completed` and nothing serves the companion channel. `.155` and `.179` do
-answer, so this is the `.139` loader, not an Astrolink ABI result. Nothing about
-it is claimed here; its offsets are evidenced statically in `docs/loop-abi.md`.
+`.139` is adapted, statically recovered and builds, but it has no device result.
+In Mirage its Supervisor never answered the companion channel on any boot: the
+installer watchface reports `Run completed`, the Run button is pressed after each
+boot, and the module is never reachable. `.155` and `.179` answer on the same
+library, the same installer build and the same activation script, so the
+difference is on the `.139` device side, not in this module. Rebuilding that
+target's installer assets from the current pack did not change it, and the guest
+logs on that firmware carry no application output to diagnose with, so the
+investigation stops here rather than guessing. Its offsets and addresses are
+evidenced statically in `docs/loop-abi.md` and `docs/target-139-recovery.md`.
 
 Device findings worth keeping, so they are not rediscovered:
 
