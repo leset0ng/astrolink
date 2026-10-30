@@ -137,3 +137,30 @@ under investigation.
 
 The corrected notification bridge and complete CoC data path still require
 runtime validation. Host tests and controller regressions are separate gates.
+
+## v34: direct business-loop completion queue
+
+ELF SHA-256: `a5d82c50ddceedd532ae15c6470d2249b220c1486a3c049e3f6aa17cfe9c0845`.
+Package size 98,816 bytes; resident size 50,565 bytes; 1,246 relocations.
+Thirty host tests, target Clippy and the unchanged ELF/package verifier passed.
+
+GAP commands now enter the firmware's existing completion queue directly and
+wake its business loop through an independently owned pipe file. Task lookup
+uses the default-loop TLS identity and pins both pipe endpoints in the owning
+filelist; it does not assume a fixed PID or global descriptor namespace. An
+independent firmware audit confirmed the layouts, critical sections, file
+reference ownership and completion-queue ABI documented in `ble-abi.md`.
+
+The first post-reboot query ran before the Supervisor was ready and timed out;
+no native result is attributed to it. The subsequent foreground probe
+(`/tmp/astrolink-v34-foreground-probe`) confirmed version 34, BOOT_RESIDENT,
+activation error 0, and passed ten checks:
+
+- Start scan: 16 ms; stop scan: 37 ms; repeated stop: 19 ms.
+- Start advertising with one user byte: 24 ms.
+- Advertising stop reported `BACKEND (1)`; Session cleanup then passed.
+
+The run's native log records real Extended Advertising Enable, Disable and
+Remove Advertising Set commands. It contains no wake assertion. The advertising
+stop callback ABI remains to be corrected/validated; this run is deliberately
+reported as failed, not as a complete scan/advertising or CoC pass.

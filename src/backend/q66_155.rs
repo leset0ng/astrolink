@@ -19,6 +19,10 @@ static SINK: AtomicUsize = AtomicUsize::new(0);
 static CLIENT: AtomicUsize = AtomicUsize::new(0);
 static CLIENT_STARTING: AtomicUsize = AtomicUsize::new(0);
 static ADAPTER_REGISTERED: AtomicUsize = AtomicUsize::new(0);
+struct GapPipe(UnsafeCell<crate::loop_dispatch::PipeWake>);
+// Initialization is serialized by CLIENT_STARTING; sends hold loop+76.
+unsafe impl Sync for GapPipe {}
+static GAP_PIPE: GapPipe = GapPipe(UnsafeCell::new(crate::loop_dispatch::PipeWake::EMPTY));
 static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
 
 extern "C" fn adapter_state_changed(_: usize, _: i32) {}
@@ -295,6 +299,15 @@ pub fn ensure_client() -> Result<(), Error> {
         if client == 0 {
             return Err(Error::NotReady);
         }
+        let business_loop = unsafe { pointer(client + 56) };
+        if business_loop == 0 {
+            return Err(Error::NotReady);
+        }
+        unsafe {
+            (*GAP_PIPE.0.get())
+                .capture_default_loop(business_loop)
+                .map_err(Error::Backend)?;
+        }
         if ADAPTER_REGISTERED.load(Ordering::Acquire) == 0 {
             let registration = unsafe {
                 fw!(
@@ -352,8 +365,8 @@ fn adapter() -> Result<usize, Error> {
     Ok(adapter)
 }
 
-/// Invoke GAP methods from a normal module/QJS worker, outside the runtime lock.
-/// They synchronously await firmware IPC; never call them from a BLE callback.
+// Invoke synchronous GAP IPC only on the client's business loop. The
+// response loop and foreign task-group descriptor tables cannot run it.
 fn start_scan_owner(service: Service) -> Result<(), Error> {
     let _operation = pin(service, false)?;
     let state = valid(service, false)?;
@@ -815,25 +828,35 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
             state.work.fetch_sub(1, Ordering::AcqRel);
             return Err(Error::NotReady);
         }
-        // Use the existing lock-protected work-completion queue. Only the
-        // no-op runs on a pool worker; the done callback runs on the business
-        // loop in the client's fd group. No foreign uv handle initialization.
+        // Post a ready completion to the same queue used by libuv workers.
+        // Stock worker wakeups resolve integer fds in the worker's group;
+        // this bridge instead signals the retained target-loop pipe directly.
         unsafe {
-            fw!(
-                0xc3f4cc4,
-                unsafe extern "C" fn(
-                    usize,
-                    *mut Work,
-                    u32,
-                    extern "C" fn(*mut Work),
-                    extern "C" fn(*mut Work, i32),
-                ),
-                business_loop,
-                work,
-                0,
-                gap_prepare,
-                gap_done
-            );
+            (*work).work_prefix[0] = gap_prepare as *const () as usize as u32;
+            (*work).work_prefix[1] = gap_done as *const () as usize as u32;
+            (*work).work_prefix[2] = business_loop as u32;
+            let mutex = business_loop + 76;
+            fw!(0xc3f4bf8, unsafe extern "C" fn(usize), mutex);
+            let head = business_loop + 68;
+            let node = work as usize + 12;
+            let tail = pointer(head + 4);
+            ptr::write_unaligned(node as *mut usize, head);
+            ptr::write_unaligned((node + 4) as *mut usize, tail);
+            ptr::write_unaligned(tail as *mut usize, node);
+            ptr::write_unaligned((head + 4) as *mut usize, node);
+            let result = (*GAP_PIPE.0.get()).signal((business_loop + 104) as *mut u32);
+            if result != 0 {
+                // The loop cannot detach the newly inserted node until this
+                // mutex is released. Undo submission before reporting failure.
+                ptr::write_unaligned(tail as *mut usize, head);
+                ptr::write_unaligned((head + 4) as *mut usize, tail);
+            }
+            fw!(0xc3f4c14, unsafe extern "C" fn(usize), mutex);
+            if result != 0 {
+                free(work.cast());
+                state.work.fetch_sub(1, Ordering::AcqRel);
+                return Err(Error::Backend(result));
+            }
         }
         return Ok(());
     }

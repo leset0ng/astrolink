@@ -93,8 +93,7 @@ impl Owner {
 #[repr(C, align(8))]
 struct Notification {
     async_handle: [u32; 16],
-    wake_file: [u64; 4],
-    file_open: bool,
+    wake: crate::loop_dispatch::PipeWake,
 }
 unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
     let stock_async = ptr::read_unaligned((manager + 60) as *const usize);
@@ -116,8 +115,7 @@ unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
         endpoint,
         Notification {
             async_handle: [0; 16],
-            wake_file: [0; 4],
-            file_open: false,
+            wake: crate::loop_dispatch::PipeWake::EMPTY,
         },
     );
     (*endpoint).async_handle[0] = owner;
@@ -133,21 +131,7 @@ unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
         fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
         return ptr::null_mut();
     }
-    let fd = ptr::read_unaligned((loop_pointer + 316) as *const i32);
-    let mut file = ptr::null_mut::<c_void>();
-    let retained = fw!(
-        0x0c332c90,
-        unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
-    )(fd, &mut file);
-    if retained == 0 {
-        let copied = fw!(
-            0x0c341c7a,
-            unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32
-        )(file, (*endpoint).wake_file.as_mut_ptr().cast(), 0);
-        fw!(0x0c334998, unsafe extern "C" fn(*mut c_void) -> i32)(file);
-        (*endpoint).file_open = copied == 0;
-    }
-    if !(*endpoint).file_open {
+    if (*endpoint).wake.capture_current(loop_pointer).is_err() {
         close_notification(endpoint);
         return ptr::null_mut();
     }
@@ -163,45 +147,8 @@ unsafe fn close_notification(endpoint: *mut Notification) {
     )(endpoint, notification_closed);
 }
 unsafe extern "C" fn notification_closed(endpoint: *mut Notification) {
-    if (*endpoint).file_open {
-        fw!(0x0c340a24, unsafe extern "C" fn(*mut c_void) -> i32)(
-            (*endpoint).wake_file.as_mut_ptr().cast(),
-        );
-    }
+    (*endpoint).wake.close();
     fw!(0x0c34cd2c, unsafe extern "C" fn(*mut Notification))(endpoint);
-}
-unsafe fn wake_notification(endpoint: *mut Notification) -> i32 {
-    use ::core::sync::atomic::AtomicU32;
-    // Match uv_async_send's busy/pending protocol, but use an owned kernel
-    // file rather than resolving the loop's fd in the producer's task group.
-    let busy = &*ptr::addr_of!((*endpoint).async_handle[6]).cast::<AtomicU32>();
-    let pending = &*ptr::addr_of!((*endpoint).async_handle[15]).cast::<AtomicU32>();
-    if pending.load(Ordering::Acquire) != 0 {
-        return 0;
-    }
-    busy.fetch_add(1, Ordering::AcqRel);
-    let mut result = 0;
-    if pending.swap(1, Ordering::AcqRel) == 0 {
-        let byte = 1u8;
-        loop {
-            let written = fw!(
-                0x0c33cc4c,
-                unsafe extern "C" fn(*mut c_void, *const u8, usize) -> isize
-            )((*endpoint).wake_file.as_mut_ptr().cast(), &byte, 1);
-            if written == -4 {
-                continue;
-            }
-            if written != 1 && written != -11 {
-                result = if written < 0 { written as i32 } else { -5 };
-                // Retain native events for the deadline heartbeat's next
-                // wake_owners() retry if the wake driver reported a failure.
-                pending.store(0, Ordering::Release);
-            }
-            break;
-        }
-    }
-    busy.fetch_sub(1, Ordering::AcqRel);
-    result
 }
 
 struct State {
@@ -498,7 +445,9 @@ pub fn notify(owner_id: u32) {
             return;
         }
         owner.queued = true;
-        let result = wake_notification(owner.endpoint);
+        let result = (*owner.endpoint)
+            .wake
+            .signal((*owner.endpoint).async_handle.as_mut_ptr());
         if result != 0 {
             owner.queued = false;
             trace(96);

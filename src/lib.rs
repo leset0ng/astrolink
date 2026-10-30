@@ -5,6 +5,8 @@
 
 pub mod backend;
 pub mod core;
+#[cfg(feature = "device")]
+mod loop_dispatch;
 pub mod protocol;
 pub mod qjs;
 #[cfg(any(all(feature = "device", target_arch = "arm"), test))]

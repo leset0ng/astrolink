@@ -48,13 +48,29 @@ requests receive a separate `IncomingId`; accepting an old token fails.
 | `0x0C863BB4` | `enqueue(owner,run,cancel,arg,event:u8)` | Locks semaphore at `0x200BE8F4`, appends a 20-byte work entry to a 408-byte ring page, wakes semaphore `0x200BE8E8`. |
 | `0x0C470ED8` | Bluelet thread entry | Removes queued work and calls `run(owner,event,arg)`; calls cancellation on shutdown. |
 | `0x200BE890` | L2CAP owner pointer | All stock L2CAP queue wrappers load this owner. |
-| `0x0C3F4CC4` | `uv__work_submit(loop,work20,kind,worker,done)` | Protected worker and completion queues; a no-op worker posts GAP execution to the business loop's done callback. |
+| `0x0C3F4CC4` | `uv__work_submit(loop,work20,kind,worker,done)` | Original pool entry; its worker wake resolves an fd in the worker's task group and is not used by this backend. |
+| `0x0C355564` | `nxsched_foreach(callback(tcb,arg),arg)` | Enumerates TCBs under scheduler/BASEPRI protection; callback return is ignored. |
+| `0x0C332BA2` | `files_getfilep(filelist,fd) -> file` | Pins the selected 32-byte file; paired with `fs_putfilep` at `0x0C334998`. |
 
-The work prefix is 20 bytes: worker, done, loop, queue next/previous. The target
-loop drain `0x0C3F7F14` unlinks work before calling done and never reads it after
-that callback, allowing the backend to free its containing work there. This
-internal entry does not alter `loop->active_reqs`, unlike public uv_queue_work.
-No foreign-thread `uv_async_init` or dynamic handle lifetime is involved.
+The work prefix is 20 bytes: worker, done, loop, queue next/previous. GAP posts
+ready work directly to `loop+68` under its `loop+76` mutex, then signals the
+existing async at `loop+104`. Firmware worker completion `0x0C3F7FA8` uses the
+same queue, lock and wake. The target drain `0x0C3F7F14` detaches under that lock,
+unlinks work before calling done and never reads it after that callback, allowing
+the backend to free its containing work there. No public `uv_queue_work` request
+accounting, foreign-thread `uv_async_init`, or new async handle is involved.
+
+`src/loop_dispatch.rs` retains the default loop's actual pipe rather than using
+its integer write fd in the caller's task group. It identifies the owning task
+by `TCB+100 -> TLS+0 -> taskinfo+16+4*uv_key -> uvstate+664`, where `uv_key` is
+read from `0x200BD444`. The matched task's `TCB+8` group embeds its filelist at
+`+96`; rows are eight entries. Both `loop+312/+316` endpoints are pinned while
+inside the scheduler critical section. Outside that section they must share the
+same pipe inode with operations `0x2CB04FFC` and correct read/write/nonblocking
+flags. The write file is duplicated independently before both pins are released.
+Only the process-lifetime firmware business loop uses this cross-task lookup;
+QJS captures its module async's pipe from its own task and releases it in the
+`uv_close` callback. Neither path caches a PID or borrows another task's fd.
 
 `enqueue` calls `cancel(0,221,arg)` synchronously if its queue is unavailable.
 Its return is a semaphore operation's result, not an acceptance status. The
