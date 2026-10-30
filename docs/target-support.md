@@ -20,7 +20,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
 | `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | implemented; native probe in progress | Independent ferry registration, 112-byte async, generic GAP/CoC; initial module activation verified, first QuickApp run reset firmware |
-| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
+| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | implemented; device probe pending | Exact-image ferry/GAP/CoC records; builds and passes ELF verification; no inherited device result |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
 | `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | unsupported | Same verdict as its `3.1.32` sibling; its own AP is in a `ZZ~` container that does not extract, so the evidence is explicitly sibling-level |
