@@ -19,8 +19,8 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.155` | 4.100.155 (Q66) | adapted, probed 18/18 | Recovery target; `docs/ble-abi.md`, `docs/qjs-abi.md` |
 | `xiaomi-band-11-4.100.139` | 4.100.139 (Q66) | adapted | Ported with `tools/fw-match`; `docs/target-139-recovery.md` |
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
-| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | recovering | All four hosts present, including `FeatureManagerQjs`; this line is a different SoC generation, so every offset is recovered from its own image |
-| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; ports as its sibling once `.043` lands |
+| `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | discovery | All four hosts present, including `FeatureManagerQjs`, on the same `best1503` SoC with a different board. Not portable from Band 11 (see below); 7 of 47 bindings recovered |
+| `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | pending | Same P67 line as `.043`; its pack was built from `.036` matches, so it ports in the other direction once `.043` has a complete ABI |
 | `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
 | `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | unsupported | Same verdict as its `3.1.32` sibling; its own AP is in a `ZZ~` container that does not extract, so the evidence is explicitly sibling-level |
@@ -32,6 +32,23 @@ built without it. Each pack carries a
 `capability_finding.feature_runtime_absent` record naming the probe that
 established it, so the verdict is auditable and cannot be mistaken for a
 missing address.
+
+## Why P67 is a discovery job, not a port
+
+Measured, not assumed (`../Canopus-Private/targets/xiaomi-band-10-pro-3.101.043/evidence/p67-astrolink-coverage.md`):
+
+- Matching `.155` against `.043` proposes 313 of 316 functions, but only 46 of
+  the 206 proposals this pack can verify independently agree with an address it
+  already recovered — 22%. Whole-body identity is worse: 19 of 342 names.
+- `uv_loop_t` is a different build. Queue head, mutex and async keep 68/76/104,
+  but the loop's pipe descriptors live at `+360/+364` behind a `-1` guard, and
+  the per-task loop state is 288 bytes instead of 712.
+- libuv carries two more sources and NuttX three more than on q66.
+
+So the 40 remaining bindings have to be found on that image with local evidence
+(producer/consumer, `__FILE__` literals, the `[FEATURE]` and `[bluelet]` format
+strings), not transferred. Filling them from cross-line scores would put
+plausible wrong addresses into a pack that is supposed to prevent exactly that.
 
 ## What "recovered" requires
 
