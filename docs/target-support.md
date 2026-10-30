@@ -91,11 +91,27 @@ host object (AIOTJS/ferry, from 0xC911306)
 ```
 
 `feature_register_feature` refuses a null registry, and the registry is never a
-global, so **a native module cannot register itself on P67**. The module's shape
-there has to be "receive the host's registry pointer and publish a static
-descriptor thunk", not Band 11's "take over the framework vtables and become the
-Application provider". That is the second integration, and it is the only route:
-there is no shortcut through the JS context.
+global, so **a native module cannot register itself on P67**.
+
+It can, however, build the host the registry needs: the whole contract is four
+fields and none of them is dereferenced during registration —
+
+```
+struct Host {            // 16 bytes, caller allocated
+    token: u32,          // +0  stored, used later to build the event adapter
+    sink: u32,           // +4  stored the same way
+    abort: u8,           // +8  must be 0; create() checks it after init
+    pad: [u8; 3],
+    package: *const u8,  // +12 may be null; a std::string is assigned from it
+}
+```
+
+So registration on P67 is `create(host) -> register(registry, &descriptor)`, a
+shim rather than a framework. What stays open is **delivery**: `host+0` builds
+the 148-byte adapter the framework calls back through, and the real host puts
+its `render_` object there, so JS-facing event delivery still needs that
+subsystem (`_pImpl->render_.loop/.stop/.event/.async_del_app`). Registration and
+service publication do not.
 
 What is known for that route: the `JSClassID` global (`dword_2013CE38`) is
 assigned lazily by `ensureJsClass 0xC867040` before any Feature object exists, so
