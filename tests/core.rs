@@ -1,6 +1,11 @@
 use astrolink::core::*;
 use astrolink::protocol::*;
 
+/// Links whose TX and RX queues together exhaust the shared message pool.
+const FILLING: usize = POOL / (2 * QUEUE_DEPTH);
+const _: () = assert!(POOL.is_multiple_of(2 * QUEUE_DEPTH));
+const _: () = assert!(FILLING > 0 && FILLING + 2 <= 16);
+
 fn peer(index: u8) -> Peer {
     Peer {
         address: [index, 2, 3, 4, 5, 6],
@@ -60,8 +65,7 @@ fn saturated_pool() -> (Engine<16>, SessionId, [LinkId; 16]) {
     let mut engine = Engine::<16>::new();
     let session = engine.create_session(1, "chat").unwrap();
     let links = std::array::from_fn(|i| open(&mut engine, session, peer(i as u8), 0x40 + i as u16));
-    assert_eq!(POOL, 5 * 2 * QUEUE_DEPTH);
-    for (i, &link) in links[..5].iter().enumerate() {
+    for (i, &link) in links[..FILLING].iter().enumerate() {
         for n in 0..QUEUE_DEPTH {
             engine.send(link, &[i as u8, n as u8]).unwrap();
             engine.receive(link, &[0x80 | i as u8, n as u8]).unwrap();
@@ -511,7 +515,7 @@ fn failed_or_cancelled_advertising_never_admits_incoming_coc() {
 #[test]
 fn exhausted_pool_returns_busy_until_submission_or_receive_releases_a_slot() {
     let (mut engine, _, links) = saturated_pool();
-    let waiting = links[5];
+    let waiting = links[FILLING];
     assert_eq!(engine.send(waiting, &[0; 513]), Err(Error::InvalidArgument));
     assert_eq!(engine.send(waiting, b"waiting"), Err(Error::Busy));
     let tx = engine.next_transmission().unwrap();
@@ -542,7 +546,7 @@ fn exhausted_pool_returns_busy_until_submission_or_receive_releases_a_slot() {
 #[test]
 fn exhausted_pool_closes_only_the_receiving_link_with_receive_overflow() {
     let (mut engine, session, links) = saturated_pool();
-    let overflowed = links[5];
+    let overflowed = links[FILLING];
     assert_eq!(
         engine.receive(overflowed, b"overflow"),
         Err(Error::ReceiveOverflow)
@@ -560,23 +564,29 @@ fn exhausted_pool_closes_only_the_receiving_link_with_receive_overflow() {
     for &link in links.iter().filter(|&&link| link != overflowed) {
         assert_eq!(engine.link(link).unwrap().state, LinkState::Connected);
     }
-    assert_eq!(engine.send(links[6], b"still full"), Err(Error::Busy));
-    engine.take_received(links[0]).unwrap().unwrap();
-    engine.receive(links[6], b"survivor").unwrap();
     assert_eq!(
-        engine.take_received(links[6]).unwrap().unwrap().as_bytes(),
+        engine.send(links[FILLING + 1], b"still full"),
+        Err(Error::Busy)
+    );
+    engine.take_received(links[0]).unwrap().unwrap();
+    engine.receive(links[FILLING + 1], b"survivor").unwrap();
+    assert_eq!(
+        engine
+            .take_received(links[FILLING + 1])
+            .unwrap()
+            .unwrap()
+            .as_bytes(),
         b"survivor"
     );
 }
 
 #[test]
 fn closing_links_with_full_tx_and_rx_queues_reclaims_the_pool_for_100_cycles() {
-    let mut engine = Engine::<6>::new();
+    let mut engine = Engine::<{ FILLING + 2 }>::new();
     let session = engine.create_session(1, "chat").unwrap();
     let survivor = open(&mut engine, session, peer(250), 0x50);
-    assert_eq!(POOL, 5 * 2 * QUEUE_DEPTH);
     for cycle in 0..100 {
-        let links: [LinkId; 5] =
+        let links: [LinkId; FILLING] =
             std::array::from_fn(|i| open(&mut engine, session, peer(i as u8), 0x40 + i as u16));
         for &link in &links {
             for _ in 0..QUEUE_DEPTH {
@@ -660,7 +670,7 @@ fn closing_a_session_releases_all_its_pool_slots() {
         ));
     }
     let new_session = engine.create_session(2, "next").unwrap();
-    for i in 0..5 {
+    for i in (0..FILLING).map(|i| i as u8) {
         let link = open(&mut engine, new_session, peer(i), 0x60 + u16::from(i));
         for _ in 0..QUEUE_DEPTH {
             engine.send(link, b"reused after session close").unwrap();
@@ -677,10 +687,13 @@ fn oversized_receive_closes_its_link_and_reclaims_queued_messages() {
         Err(Error::ReceiveOverflow)
     );
     for _ in 0..QUEUE_DEPTH {
-        engine.send(links[5], b"reclaimed TX").unwrap();
-        engine.receive(links[5], b"reclaimed RX").unwrap();
+        engine.send(links[FILLING], b"reclaimed TX").unwrap();
+        engine.receive(links[FILLING], b"reclaimed RX").unwrap();
     }
-    assert_eq!(engine.send(links[6], b"full again"), Err(Error::Busy));
+    assert_eq!(
+        engine.send(links[FILLING + 1], b"full again"),
+        Err(Error::Busy)
+    );
 }
 
 #[test]

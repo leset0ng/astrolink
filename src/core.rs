@@ -11,6 +11,8 @@ pub const MAX_MESSAGE_BYTES: usize = 512;
 pub const QUEUE_DEPTH: usize = 4;
 /// Shared TX/RX message budget across all Links, each still bounded by QUEUE_DEPTH.
 pub const POOL: usize = 40;
+// The free-slot bitmap is a u64, so the pool cannot grow past its width.
+const _: () = assert!(POOL <= 63);
 pub const CONNECT_TIMEOUT_MS: u64 = 15_000;
 pub const DEVICE_MAX_LINKS: usize = 16;
 
@@ -314,6 +316,10 @@ impl<const LINKS: usize> Engine<LINKS> {
         Ok(MessageId(slot as u16))
     }
 
+    /// Every queued handle owns exactly one slot, so releasing an already free
+    /// slot is a bug rather than a recoverable condition. The build profile is
+    /// `panic = "abort"`, which keeps that failure loud instead of silently
+    /// handing the same bytes to two Links.
     fn release_message(&mut self, id: MessageId) -> Message {
         let slot = usize::from(id.0);
         let message = self.pool[slot].take().expect("queued message owns a slot");
