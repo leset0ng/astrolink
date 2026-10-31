@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node tests/run.cjs",
     "build:probe": "pnpm typecheck && node scripts/build.cjs probe",
+    "build:peer": "pnpm typecheck && node scripts/build.cjs peer",
     "build:bytecode": "pnpm typecheck && node scripts/build.cjs bytecode",
     "test:bundle": "pnpm build && node --test tests/bundle.test.cjs"
   },
@@ -23,6 +24,6 @@
     "ux-types": "1.7.0"
   },
   "dependencies": {
-    "@canopus/astrolink": "file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz"
+    "@canopus/astrolink": "file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz"
   }
 }

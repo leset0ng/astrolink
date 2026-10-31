@@ -4,8 +4,10 @@
 //! recovered, and an adapted module is only kept once it is really built.
 //! Editing one side alone would silently drop a device from the package or
 //! claim support that was never compiled, so this test fails instead. Targets
-//! under construction stay explicitly `SUPPORTED = false`; targets without an
-//! ABI use `abi_unsupported!`. Neither enters the package build list.
+//! recovered. Static legacy integrations may be packaged for isolated
+//! validation even while `SUPPORTED = false`; activation rejects those targets
+//! before firmware access. `Canopus.n66-validation.toml` selects N66 alone for
+//! that validation. Neither file silently turns static recovery into support.
 
 use std::{fs, path::Path};
 
@@ -83,7 +85,11 @@ fn the_build_list_is_exactly_the_recovered_targets() {
     listed.sort();
     let mut adapted: Vec<String> = abi_modules()
         .into_iter()
-        .filter(|module| module.adapted)
+        .filter(|module| {
+            module.adapted
+                || (module.source.contains("pub const SUPPORTED: bool = false;")
+                    && module.source.contains("pub const TARGET_ID: &str = "))
+        })
         .map(|module| module.id)
         .collect();
     adapted.sort();

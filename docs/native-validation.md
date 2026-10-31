@@ -278,3 +278,30 @@ records `ok=true`, terminal `complete` and all 18 lifecycle checks passing,
 the same set as v35/v36. This run does not repeat the v36 two-role LE CoC peer
 integration; that evidence stays attributed to v36, whose firmware call path
 this build preserves value for value.
+
+## N66 3.1.32: legacy lifecycle and remaining CoC gate
+
+Module v65 completed all 18 native lifecycle checks on the isolated N66 device:
+legacy native-extension loading, capabilities, service-name boundaries,
+scan/advertising start and stop, idempotent stop, and Session close/rebuild.
+The captured UI is `/tmp/astrolink-astrolink-n66-032-probe/screen.png`.
+This firmware did not yield the RAM console stream used by the generic probe
+parser, so the harness's `summary.ok` is not claimed as a pass; the 18/18 UI
+and native event trace are the actual evidence.
+
+The working N66 path uses an independent btservice pipe file. Task enumeration
+performs identity reads only; duplication happens after leaving the scheduler
+critical section. Wakeups write that retained file directly instead of asking
+`uv_async_send` to resolve a descriptor in the producer's foreign group. The
+legacy GAP owner register takes an owner pointer as its second argument and
+the raw callback table as its third.
+
+The cleaned v67 build has ELF SHA-256
+`40611d88fcdeec5d4e29b5983c5a91e60bd4d920a2b988c980832fefd6d283a5`,
+53,005 resident bytes, zero undefined symbols and 1,291 relocations. Host
+tests and target Clippy pass. Bidirectional CoC is **not** validated yet. A
+dedicated automatic peer probe was built, but a fresh isolated Supervisor
+repeatedly failed module installation at `STAGE_WRITE` while writing
+`.ko.upload`; `/tmp/n66-coc-v67-install/summary.json` preserves that separate
+installation blocker. No scan-report, LE connection, HELLO or SDU success is
+inferred from the lifecycle result.

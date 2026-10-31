@@ -1,12 +1,13 @@
 //! libuv wake bridge across NuttX task-group fd tables.
 //! Firmware addresses and structure offsets come from `crate::abi`.
 use crate::abi;
-use core::{
-    ffi::c_void,
-    mem, ptr,
-    sync::atomic::{AtomicU32, Ordering},
-};
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+use core::mem;
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+use core::{ffi::c_void, ptr};
 
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 macro_rules! fw {
     ($address:expr, $ty:ty) => {
         mem::transmute::<usize, $ty>($address | 1)
@@ -20,6 +21,10 @@ pub(crate) struct PipeWake {
     file: [u64; 4],
     open: bool,
 }
+#[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+#[path = "n66_file_capture.rs"]
+mod n66_capture;
+
 impl PipeWake {
     pub(crate) const EMPTY: Self = Self {
         file: [0; 4],
@@ -32,22 +37,51 @@ impl PipeWake {
         if self.open {
             return Ok(());
         }
-        let fd = ptr::read_unaligned((loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
-        let mut source = ptr::null_mut::<c_void>();
-        let result = fw!(
-            abi::F_FS_GETFILEP,
-            unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
-        )(fd, &mut source);
-        if result != 0 {
-            return Err(result);
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        {
+            let result = n66_capture::capture_current(self.file.as_mut_ptr().cast(), loop_pointer);
+            self.open = result == 0;
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(result)
+            }
         }
-        let result = self.duplicate(source);
-        fw!(abi::F_FS_PUTFILEP, unsafe extern "C" fn(*mut c_void) -> i32)(source);
-        result
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+        {
+            let fd = ptr::read_unaligned((loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
+            let mut source = ptr::null_mut::<c_void>();
+            let result = fw!(
+                abi::F_FS_GETFILEP,
+                unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
+            )(fd, &mut source);
+            if result != 0 {
+                return Err(result);
+            }
+            let result = self.duplicate(source);
+            fw!(abi::F_FS_PUTFILEP, unsafe extern "C" fn(*mut c_void) -> i32)(source);
+            result
+        }
+    }
+
+    /// Resolve N66's process-lifetime btservice file table by pipe identity.
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    pub(crate) unsafe fn capture_btservice(&mut self, loop_pointer: usize) -> Result<(), i32> {
+        if self.open {
+            return Ok(());
+        }
+        let result = n66_capture::capture_btservice(self.file.as_mut_ptr().cast(), loop_pointer);
+        self.open = result == 0;
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(result)
+        }
     }
 
     /// Resolve a process-lifetime default loop by its owning task's TLS
     /// identity, not by the caller's fd table or a fixed PID.
+    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
     pub(crate) unsafe fn capture_default_loop(&mut self, loop_pointer: usize) -> Result<(), i32> {
         if self.open {
             return Ok(());
@@ -82,6 +116,7 @@ impl PipeWake {
     }
 
     /// `source` must be pinned by its owning filelist reference for this call.
+    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
     pub(crate) unsafe fn duplicate(&mut self, source: *mut c_void) -> Result<(), i32> {
         let copied = fw!(
             abi::F_FILE_DUP3,
@@ -98,6 +133,9 @@ impl PipeWake {
     pub(crate) unsafe fn close(&mut self) {
         if self.open {
             self.open = false;
+            #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+            n66_capture::release_owned(self.file.as_mut_ptr().cast());
+            #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
             fw!(abi::F_FILE_CLOSE, unsafe extern "C" fn(*mut c_void) -> i32)(
                 self.file.as_mut_ptr().cast(),
             );
@@ -110,44 +148,75 @@ impl PipeWake {
         if !self.open || handle.is_null() {
             return -9;
         }
-        let busy = &*handle.add(abi::ASYNC_BUSY_WORD).cast::<AtomicU32>();
-        let pending = &*handle.add(abi::ASYNC_PENDING_WORD).cast::<AtomicU32>();
-        if pending.load(Ordering::Acquire) != 0 {
-            return 0;
-        }
-        busy.fetch_add(1, Ordering::AcqRel);
-        let mut result = 0;
-        if pending.swap(1, Ordering::AcqRel) == 0 {
-            let byte = 1u8;
-            loop {
-                let written = abi::write_byte(self.file.as_mut_ptr().cast(), byte);
-                if written == -4 {
-                    continue;
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        {
+            // N66 has only the pending flag, no busy counter. Preserve that
+            // protocol, but never let uv_async_send resolve the target fd in
+            // the producer's foreign group: write the captured file directly.
+            let pending = &*handle.add(abi::ASYNC_PENDING_WORD).cast::<AtomicU32>();
+            let mut result = 0;
+            if pending.swap(1, Ordering::AcqRel) == 0 {
+                let byte = 1u8;
+                loop {
+                    let written = abi::write_byte(self.file.as_mut_ptr().cast(), byte);
+                    if written == -4 {
+                        continue;
+                    }
+                    if written != 1 && written != -11 {
+                        result = if written < 0 { written as i32 } else { -5 };
+                        pending.store(0, Ordering::Release);
+                    }
+                    break;
                 }
-                if written != 1 && written != -11 {
-                    result = if written < 0 { written as i32 } else { -5 };
-                    pending.store(0, Ordering::Release);
-                }
-                break;
             }
+            result
         }
-        busy.fetch_sub(1, Ordering::AcqRel);
-        result
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+        {
+            let busy = &*handle.add(abi::ASYNC_BUSY_WORD).cast::<AtomicU32>();
+            let pending = &*handle.add(abi::ASYNC_PENDING_WORD).cast::<AtomicU32>();
+            if pending.load(Ordering::Acquire) != 0 {
+                return 0;
+            }
+            // The busy/pending protocol belongs to the newer retained-file bridge.
+            busy.fetch_add(1, Ordering::AcqRel);
+            let mut result = 0;
+            if pending.swap(1, Ordering::AcqRel) == 0 {
+                let byte = 1u8;
+                loop {
+                    let written = abi::write_byte(self.file.as_mut_ptr().cast(), byte);
+                    if written == -4 {
+                        continue;
+                    }
+                    if written != 1 && written != -11 {
+                        result = if written < 0 { written as i32 } else { -5 };
+                        pending.store(0, Ordering::Release);
+                    }
+                    break;
+                }
+            }
+            busy.fetch_sub(1, Ordering::AcqRel);
+            result
+        }
     }
 }
 
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 struct Lookup {
     loop_pointer: usize,
     key: u32,
     read: *mut c_void,
     write: *mut c_void,
 }
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 fn ram_pointer(address: usize) -> bool {
     (0x20000000..0x40000000).contains(&address) && address & 3 == 0
 }
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 unsafe fn word(address: usize) -> usize {
     ptr::read_unaligned(address as *const usize)
 }
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 unsafe extern "C" fn find_loop_files(tcb: usize, lookup: *mut Lookup) {
     let lookup = &mut *lookup;
     if !lookup.read.is_null() || !lookup.write.is_null() || tcb == 0 {
@@ -186,6 +255,7 @@ unsafe extern "C" fn find_loop_files(tcb: usize, lookup: *mut Lookup) {
         unsafe extern "C" fn(usize, i32) -> *mut c_void
     )(filelist, write_fd);
 }
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 unsafe fn pipe_pair(read: *mut c_void, write: *mut c_void) -> bool {
     if read.is_null() || write.is_null() {
         return false;

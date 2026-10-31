@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@canopus/astrolink':
-        specifier: file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz
-        version: file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz
+        specifier: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz
+        version: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz
     devDependencies:
       '@aiot-toolkit/jsc':
         specifier: 1.0.9
@@ -547,9 +547,9 @@ packages:
     resolution: {integrity: sha512-WCsemW40Cpc6gouC1SrY6PBaZ+oLRlEVY9XBvZBI7il/HyUrb2nJ505wE1MHEFyDZNnrWDEuy4jL50WVHfTTSQ==}
     engines: {node: '>=6.9.0'}
 
-  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz':
-    resolution: {integrity: sha512-H5Im4+kS6hx3kQaFFhtfVX+k76W6NhtpqOYjowpbFbrR3GxjtrkRtZL2ESLIUdyNZSrFw0Qn1ehRtihwllMuIw==, tarball: file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz}
-    version: 0.1.0
+  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz':
+    resolution: {integrity: sha512-PFx2LUwmeG/pbgwr3M2q1NxTDvO3hJG6OVo64MYEFFYWAGVHPBRm00FcDG37AX+RzH1KgZXWirzTozGpoW3Oqw==, tarball: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz}
+    version: 0.1.1
 
   '@discoveryjs/json-ext@0.5.7':
     resolution: {integrity: sha512-dBVuXR082gk3jsFp7Rd/JI4kytwGHecnCoTtXFb7DB6CNHp4rg5k1bhg0nWdLGLnOV71lmDzGQaLMy8iPLY0pw==}
@@ -3845,7 +3845,7 @@ snapshots:
       '@babel/helper-string-parser': 7.29.11
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz': {}
+  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz': {}
 
   '@discoveryjs/json-ext@0.5.7': {}
 

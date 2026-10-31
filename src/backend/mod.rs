@@ -97,7 +97,7 @@ pub type EventSink = for<'a> fn(Event<'a>);
 #[cfg(all(feature = "device", target_arch = "arm"))]
 mod bluelet;
 #[cfg(all(feature = "device", target_arch = "arm"))]
-pub use bluelet::*;
+pub(crate) use bluelet::*;
 
 /// Host builds expose the contract without attempting firmware calls. Host
 /// tests exercise the Engine with their own explicitly supplied transport.

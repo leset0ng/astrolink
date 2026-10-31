@@ -21,17 +21,44 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
 | `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | adapted, emulator probe 18/18 and both CoC roles | v42; real LE/HELLO, 0/1/511/512-byte SDUs, byte-verified replies and cleanup; `docs/p67-runtime-validation.md` |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | adapted, independent emulator probe 18/18 | v42; exact-image L2 backend, CLI install/activation and native lifecycle passed; CoC peer run pending |
-| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | unsupported | No Feature runtime (`FeatureManagerQjs` x0) and no Bluelet BLE host; pack records the finding |
-| `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | unsupported | Has libuv, Bluelet LE CoC and GAP, but no Feature runtime (`FeatureManagerQjs` x0); pack records the finding |
-| `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | unsupported | Same verdict as its `3.1.32` sibling; its own AP is in a `ZZ~` container that does not extract, so the evidence is explicitly sibling-level |
-| `xiaomi-band-10-3.1.28` | 3.1.28 (O66) | unsupported | No Feature runtime and no L2CAP channel names; a Supervisor and Manager do run there, but no module has ever registered |
+| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | static recovery; not runtime-enabled | Legacy lifecycle/QJS recovered; GAP/CoC and isolated validation incomplete; `SUPPORTED = false` |
+| `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | isolated lifecycle probe 18/18; CoC validation pending | Legacy extension, scan/advertising and Session teardown pass; bidirectional LE CoC acceptance is not yet claimed; `docs/legacy-import-contract.md` |
+| `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | not adapted; evidence pending | Its own extracted payload is not an independently analyzed AP. The old sibling-based `feature_runtime_absent` verdict is not retained as evidence of absence |
+| `xiaomi-band-10-3.1.28` | 3.1.28 (O66) | static recovery; validation stopped by request | ABI evidence retained; no installation or runtime validation; `SUPPORTED = false` |
 
-The `unsupported` rows are decided, not deferred: Astrolink publishes its
-service through the firmware's QuickJS Feature runtime, and those images were
-built without it. Each pack carries a
-`capability_finding.feature_runtime_absent` record naming the probe that
-established it, so the verdict is auditable and cannot be mistaken for a
-missing address.
+The legacy rows are feasible recovery targets, not completed adaptations.
+Their images do not contain the newer `FeatureManagerQjs` implementation, but
+they do contain a per-application native extension list and ordinary Bluelet
+LE CoC hosts. A legacy bridge must recover per-context teardown, QuickJS
+value/buffer ownership, GAP callbacks and all remaining firmware contracts.
+The old `capability_finding.feature_runtime_absent` records are superseded for
+N66/O66/P65: a string census cannot establish that these older hosts do not
+exist. See `docs/legacy-extension-investigation.md` and
+`docs/p65-native-extension.md`.
+
+The existing `bt_l2cap_*` records for those three targets include locally
+disproved names, including an O66 connect address that is VFS polling and a
+P65 connect address that is disconnect/reject. Do not call them or replace
+them wholesale from the investigation documents. Every replacement requires
+its own exact-image producer/consumer evidence, pack review and validation.
+
+The N66 file helper `src/n66_file_capture.rs` captures a QuickApp pipe on its
+current group-owning task. The independent btservice loop instead requires a
+foreign-group capture: `nxsched_foreach` performs identity reads only and finds
+the unique read/write fd pair with matching pipe inode, deduplicating threads
+that share one group. After leaving the scheduler critical section it holds the
+recovered filelist mutex, revalidates both 24-byte slots and calls native
+two-argument `file_dup2`. N66 wakeups preserve the pending-word protocol but
+write that retained file directly; calling `uv_async_send` would incorrectly
+resolve the numeric fd in the producer's group. Legacy O66/P65 activation is
+rejected by their `SUPPORTED = false` gate before any firmware access.
+
+The N66 lifecycle probe passed all 18 checks on the isolated 3.1.32 device,
+including scan/advertising start, stop and idempotent stop, plus Session close
+and reconstruction. The legacy GAP owner register reads its owner through the
+second argument and accepts the raw callback table as the third; this is not
+the newer IPC client shape. Bidirectional CoC acceptance remains a separate
+gate and is not inferred from that lifecycle result.
 
 ## P67 native integration
 

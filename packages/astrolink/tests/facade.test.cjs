@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict")
 const { test } = require("node:test")
-const { AstrolinkFacade, OP, EVENT } = require("../dist/cjs/index.cjs")
+const { AstrolinkFacade, loadAstrolink, disposeAstrolink, OP, EVENT } = require("../dist/cjs/index.cjs")
 const { primitive } = require("./primitive.cjs")
 const turn = async () => { await Promise.resolve(); await Promise.resolve() }
 const incoming = { kind: EVENT.CONNECTION, link: 42, peerId: "00112233445500", maxMessageBytes: 512 }
@@ -17,6 +17,49 @@ async function close(f) {
   await promise
   await f.facade.dispose()
 }
+
+test("native loader selects the resident legacy primitive and retains the Feature fallback", async () => {
+  const previousLoader = globalThis.$app_require$
+  const previousNative = globalThis.__canopusAstrolinkNative
+  const previousAiot = globalThis.aiot
+  const core = primitive()
+  const legacy = primitive()
+  const feature = primitive()
+  let calls = 0
+  try {
+    globalThis.aiot = { canopusAstrolink: core.feature }
+    globalThis.__canopusAstrolinkNative = legacy.feature
+    globalThis.$app_require$ = () => { throw new Error("legacy loader must not require a Feature") }
+    assert.equal(loadAstrolink(), loadAstrolink())
+    await disposeAstrolink()
+    assert.equal(core.subscriptions, 1)
+    assert.equal(core.unsubscriptions, 1)
+    assert.equal(legacy.subscriptions, 0)
+    delete globalThis.aiot
+    loadAstrolink()
+    await disposeAstrolink()
+    assert.equal(legacy.subscriptions, 1)
+    assert.equal(legacy.unsubscriptions, 1)
+    delete globalThis.__canopusAstrolinkNative
+    globalThis.$app_require$ = name => {
+      assert.equal(name, "@app-module/canopus.astrolink")
+      calls++
+      return feature.feature
+    }
+    assert.equal(loadAstrolink(), loadAstrolink())
+    await disposeAstrolink()
+    assert.equal(calls, 1)
+    assert.equal(feature.unsubscriptions, 1)
+  } finally {
+    await disposeAstrolink()
+    if (previousLoader === undefined) delete globalThis.$app_require$
+    else globalThis.$app_require$ = previousLoader
+    if (previousAiot === undefined) delete globalThis.aiot
+    else globalThis.aiot = previousAiot
+    if (previousNative === undefined) delete globalThis.__canopusAstrolinkNative
+    else globalThis.__canopusAstrolinkNative = previousNative
+  }
+})
 
 test("primitive ABI creates numeric sessions, validates UTF-8 and subscribes once", async () => {
   const f = setup()

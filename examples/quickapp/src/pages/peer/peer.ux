@@ -1,0 +1,51 @@
+<template>
+  <div class="page">
+    <text class="title">Astrolink</text>
+    <text class="status {{failed ? 'failed' : ''}}">{{status}}</text>
+    <text class="step">{{step}}</text>
+    <text class="detail">{{detail}}</text>
+    <text class="count">已通过 {{passed}} 项</text>
+  </div>
+</template>
+
+<script>
+import brightness from "@system.brightness"
+import { NativePeerRunner } from "../../ts/peer-runner"
+
+let runner = null
+
+export default {
+  private: { status: "双向 CoC 探针", step: "准备启动", detail: "", passed: 0, failed: false },
+  onInit() {
+    brightness.setKeepScreenOn({ keepScreenOn: true })
+    runner = new NativePeerRunner(view => {
+      this.status = view.status
+      this.step = view.step
+      this.detail = view.detail
+      this.passed = view.passed
+      this.failed = view.failed
+      if (view.failed || view.passed >= 13) brightness.setKeepScreenOn({ keepScreenOn: false })
+    })
+    runner.start().catch(error => {
+      this.status = "探针执行失败"
+      this.detail = String(error)
+      this.failed = true
+    })
+  },
+  onDestroy() {
+    brightness.setKeepScreenOn({ keepScreenOn: false })
+    if (runner) runner.destroy()
+    runner = null
+  }
+}
+</script>
+
+<style>
+.page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.title { margin-top: 48px; font-size: 25px; color: #ffffff; }
+.status { margin-top: 16px; font-size: 20px; color: #8fe0b5; }
+.step { margin-top: 54px; font-size: 22px; color: #ffffff; text-align: center; }
+.detail { margin-top: 18px; padding-left: 14px; padding-right: 14px; font-size: 16px; color: #b8b8b8; text-align: center; }
+.count { margin-top: 44px; font-size: 19px; color: #ffffff; }
+.failed { color: #ff8f8f; }
+</style>

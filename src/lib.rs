@@ -22,6 +22,7 @@ mod device {
     const MAGIC: u32 = 0x41535431; // "AST1"
     static INIT_STAGE: AtomicU32 = AtomicU32::new(0);
     static INIT_ERROR: AtomicI32 = AtomicI32::new(0);
+    static INIT_DETAIL: AtomicI32 = AtomicI32::new(0);
 
     fn failed(error: i32) -> i32 {
         INIT_ERROR.store(error, Ordering::Release);
@@ -43,6 +44,11 @@ mod device {
         RESULT_REBOOT_REQUIRED as i32
     }
 
+    #[cfg(feature = "legacy-host")]
+    pub fn activation_detail(value: i32) {
+        INIT_DETAIL.store(value, Ordering::Release);
+    }
+
     extern "C" fn activate(ctx: *const ContextV1) -> i32 {
         INIT_STAGE.store(1, Ordering::Release);
         INIT_ERROR.store(0, Ordering::Release);
@@ -55,16 +61,20 @@ mod device {
         INIT_STAGE.store(2, Ordering::Release);
         #[cfg(target_arch = "arm")]
         unsafe {
+            #[cfg(feature = "legacy-host")]
+            if !crate::abi::SUPPORTED {
+                return failed(-95);
+            }
             if let Err(error) = crate::runtime::install(c) {
                 return failed(match error {
-                    crate::core::Error::Backend(raw) => raw,
-                    _ => -95,
+                    crate::core::Error::Backend(raw) => 2000 - raw,
+                    _ => 2001,
                 });
             }
             INIT_STAGE.store(3, Ordering::Release);
             if let Err(error) = crate::qjs::install(c, &crate::runtime::ADAPTER) {
                 crate::runtime::rollback_before_feature();
-                return failed(error);
+                return failed(3000 - error);
             }
         }
         INIT_STAGE.store(4, Ordering::Release);
@@ -86,6 +96,7 @@ mod device {
             status_put_u32(w, MAGIC)
                 && status_put_u32(w, INIT_STAGE.load(Ordering::Acquire))
                 && status_put_u32(w, INIT_ERROR.load(Ordering::Acquire) as u32)
+                && status_put_u32(w, INIT_DETAIL.load(Ordering::Acquire) as u32)
         } {
             return -1;
         }
@@ -124,6 +135,8 @@ mod device {
     };
 }
 
+#[cfg(all(feature = "device", feature = "legacy-host"))]
+pub(crate) use device::activation_detail;
 #[cfg(all(feature = "device", not(test)))]
 #[panic_handler]
 fn panic(_info: &::core::panic::PanicInfo) -> ! {

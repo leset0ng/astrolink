@@ -216,6 +216,15 @@ pub(super) unsafe fn free(context: Context, value: Value) {
     fw!(abi::F_QJS_FREE_VALUE, unsafe extern "C" fn(Context, Value))(context, value);
 }
 pub(super) unsafe fn clear_exception(context: Context) {
+    #[cfg(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-xiaomi-band-10-3-1-28"
+    ))]
+    let value = abi::qjs_get_exception(context);
+    #[cfg(not(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-xiaomi-band-10-3-1-28"
+    )))]
     let value = fw!(
         abi::F_QJS_GET_EXCEPTION,
         unsafe extern "C" fn(Context) -> Value
@@ -294,7 +303,7 @@ unsafe fn binary_bytes(context: Context, value: Value, out: &mut [u8]) -> Option
     }
     valid.then_some(length)
 }
-unsafe fn object(context: Context) -> Value {
+pub(super) unsafe fn object(context: Context) -> Value {
     fw!(
         abi::F_QJS_NEW_OBJECT,
         unsafe extern "C" fn(Context) -> Value

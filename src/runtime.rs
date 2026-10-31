@@ -1018,6 +1018,10 @@ fn apply_event(
     incoming
 }
 fn receive(event: backend::Event<'_>) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        qjs::trace(340);
+    }
     let event_stage = match event {
         backend::Event::Registered { .. } => 140,
         backend::Event::ScanStarted { .. } => 141,
@@ -1368,6 +1372,12 @@ unsafe extern "C" fn timeout_tick(ctx: *const ContextV1, _: i32, _: *mut c_void)
         runtime.engine.tick(runtime.now);
         runtime.collect_core_events();
     });
+    #[cfg(all(
+        feature = "device",
+        target_arch = "arm",
+        feature = "target-xiaomi-band-9-3-1-32"
+    ))]
+    backend::prepare_gap_wake();
     // The Supervisor's ordinary background task is allowed to issue GAP IPC.
     // This timer supplies deadlines and retries resources held during shutdown;
     // Bluetooth events themselves wake the QJS task immediately through notify.
@@ -1380,18 +1390,21 @@ pub unsafe fn install(context: *const CanopusContext) -> Result<(), Error> {
     if ACTIVE.load(Ordering::Acquire) {
         return Ok(());
     }
-    if context.is_null() || (*context).time.is_null() {
-        return Err(Error::Unsupported);
+    if context.is_null() {
+        return Err(Error::Backend(-2010));
+    }
+    if (*context).time.is_null() {
+        return Err(Error::Backend(-2011));
     }
     let opaque = context.cast::<ContextV1>();
     if !canopus_abi::services_has(opaque, canopus_abi::SVC_TIME, 2) {
-        return Err(Error::Unsupported);
+        return Err(Error::Backend(-2012));
     }
     backend::install(receive)?;
     let time = &*(*context).time;
     let timer = (time.timer_create)(opaque, 100, 1, timeout_tick, ::core::ptr::null_mut());
     if timer < 0 {
-        return Err(Error::Backend(timer));
+        return Err(Error::Backend(-2100 + timer));
     }
     let background = (time.timer_set_background)(opaque, timer, 1);
     let start = if background == 0 {
@@ -1401,7 +1414,7 @@ pub unsafe fn install(context: *const CanopusContext) -> Result<(), Error> {
     };
     if start != 0 {
         (time.timer_destroy)(opaque, timer);
-        return Err(Error::Backend(start));
+        return Err(Error::Backend(-2200 + start));
     }
     let clock = (time.monotonic_ms)(opaque);
     locked(|runtime| {

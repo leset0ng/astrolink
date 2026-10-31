@@ -6,12 +6,16 @@ use super::*;
 use crate::abi;
 use core::{
     cell::UnsafeCell,
-    ffi::{c_char, c_void},
+    ffi::c_void,
     mem, ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
+use core::ffi::c_char;
+
 const OWNER_COUNT: usize = 4;
+#[cfg(not(feature = "legacy-host"))]
 const NAME: &[u8] = b"canopus.astrolink\0";
 
 macro_rules! fw {
@@ -21,7 +25,8 @@ macro_rules! fw {
 }
 #[cfg(not(any(
     feature = "target-xiaomi-band-10-pro-3-101-036",
-    feature = "target-xiaomi-band-10-pro-3-101-043"
+    feature = "target-xiaomi-band-10-pro-3-101-043",
+    feature = "legacy-host"
 )))]
 #[path = "framework.rs"]
 mod host;
@@ -31,8 +36,12 @@ mod host;
 ))]
 #[path = "ferry.rs"]
 mod host;
+#[cfg(feature = "legacy-host")]
+#[path = "legacy.rs"]
+mod host;
 pub use host::install;
 
+#[cfg(not(feature = "legacy-host"))]
 #[repr(C)]
 struct Lifecycle {
     registered: Option<unsafe extern "C" fn(*const c_char)>,
@@ -42,6 +51,7 @@ struct Lifecycle {
     destroy: unsafe extern "C" fn(Context, usize),
     final_hook: Option<unsafe extern "C" fn(Context, usize)>,
 }
+#[cfg(not(feature = "legacy-host"))]
 #[repr(C)]
 struct Description {
     version: u32,
@@ -52,7 +62,9 @@ struct Description {
     member_count: u32,
     members: *const c_void,
 }
+#[cfg(not(feature = "legacy-host"))]
 unsafe impl Sync for Description {}
+#[cfg(not(feature = "legacy-host"))]
 static LIFECYCLE: Lifecycle = Lifecycle {
     registered: None,
     create: on_create,
@@ -61,6 +73,7 @@ static LIFECYCLE: Lifecycle = Lifecycle {
     destroy: on_destroy,
     final_hook: None,
 };
+#[cfg(not(feature = "legacy-host"))]
 static DESCRIPTION: Description = Description {
     version: 1,
     name: NAME.as_ptr().cast(),
@@ -97,12 +110,7 @@ struct Notification {
     async_handle: [u32; abi::FEATURE_ASYNC_WORDS],
     wake: crate::loop_dispatch::PipeWake,
 }
-unsafe fn create_notification(manager: usize, owner: u32) -> *mut Notification {
-    let stock_async = ptr::read_unaligned((manager + abi::MANAGER_ASYNC) as *const usize);
-    if stock_async == 0 {
-        return ptr::null_mut();
-    }
-    let loop_pointer = ptr::read_unaligned((stock_async + abi::HANDLE_LOOP) as *const usize);
+unsafe fn create_notification_on_loop(loop_pointer: usize, owner: u32) -> *mut Notification {
     if loop_pointer == 0 {
         return ptr::null_mut();
     }
@@ -157,7 +165,9 @@ struct State {
     adapter: Option<&'static Adapter>,
     owners: [Owner; OWNER_COUNT],
     next_owner: u32,
+    #[cfg(not(feature = "legacy-host"))]
     original_dispatch: usize,
+    #[cfg(not(feature = "legacy-host"))]
     hook_id: i32,
 }
 // pthread_mutex_t is initialized by the stock libuv mutex initializer. Storage
@@ -168,7 +178,9 @@ static STATE: Shared<State> = Shared(UnsafeCell::new(State {
     adapter: None,
     owners: [Owner::EMPTY; OWNER_COUNT],
     next_owner: 1,
+    #[cfg(not(feature = "legacy-host"))]
     original_dispatch: 0,
+    #[cfg(not(feature = "legacy-host"))]
     hook_id: -1,
 }));
 struct Guard;
@@ -189,10 +201,21 @@ impl Drop for Guard {
     }
 }
 
+#[cfg(not(feature = "legacy-host"))]
 unsafe extern "C" fn on_create(context: Context, prototype: usize) {
     trace(30);
     // FeaturePrototypeQjs, not the QJS class object constructed at C4929C8.
     let manager = ptr::read_unaligned((prototype + abi::PROTOTYPE_MANAGER) as *const usize);
+    let stock_async = ptr::read_unaligned((manager + abi::MANAGER_ASYNC) as *const usize);
+    let loop_pointer = if stock_async == 0 {
+        0
+    } else {
+        ptr::read_unaligned((stock_async + abi::HANDLE_LOOP) as *const usize)
+    };
+    open_owner(context, prototype, loop_pointer);
+}
+
+pub(super) unsafe fn open_owner(context: Context, prototype: usize, loop_pointer: usize) {
     let mut guard = Guard::lock();
     let state = guard.state();
     let Some(index) = state.owners.iter().position(|owner| owner.id == 0) else {
@@ -202,7 +225,7 @@ unsafe extern "C" fn on_create(context: Context, prototype: usize) {
         return;
     };
     let id = state.next_owner;
-    let endpoint = create_notification(manager, id);
+    let endpoint = create_notification_on_loop(loop_pointer, id);
     if endpoint.is_null() {
         trace(95);
         return;
@@ -218,24 +241,38 @@ unsafe extern "C" fn on_create(context: Context, prototype: usize) {
     };
 }
 
+#[cfg(not(feature = "legacy-host"))]
 unsafe extern "C" fn on_required(context: Context, instance: usize) {
     trace(31);
     let object = ptr::read_unaligned((instance + abi::INSTANCE_HANDLE) as *const Value);
+    expose_owner(context, object);
+}
+
+pub(super) unsafe fn expose_owner(context: Context, object: Value) -> bool {
     for (name, operation, argc) in [
         (b"getCapabilities\0".as_slice(), 0, 0),
         (b"createSession\0".as_slice(), 1, 1),
         (b"request\0".as_slice(), 2, 6),
         (b"subscribe\0".as_slice(), 3, 1),
     ] {
+        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         let function = fw!(
             abi::F_QJS_NEW_C_FUNCTION2,
             unsafe extern "C" fn(Context, usize, *const c_char, i32, i32, i32) -> Value
         )(
             context,
             native_call as *const () as usize,
-            name.as_ptr().cast(),
+            name.as_ptr().cast::<c_char>(),
             argc,
             1,
+            operation,
+        );
+        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+        let function = abi::qjs_new_c_function(
+            context,
+            native_call as *const () as usize,
+            name.as_ptr().cast(),
+            argc,
             operation,
         );
         if !define(context, object, name, function) {
@@ -243,12 +280,13 @@ unsafe extern "C" fn on_required(context: Context, instance: usize) {
             if let Some((owner, adapter)) = current(context) {
                 (adapter.close_owner)(owner.id);
             }
-            return;
+            return false;
         }
     }
+    true
 }
 
-unsafe extern "C" fn on_destroy(context: Context, prototype: usize) {
+pub(super) unsafe extern "C" fn on_destroy(context: Context, prototype: usize) {
     let (owner, adapter) = {
         let mut guard = Guard::lock();
         let state = guard.state();

@@ -4,13 +4,20 @@ import type { PrimitiveFeature } from "./facade.js"
 // Confirmed Q66 Feature name. The owner context supplies this native loader.
 declare const $app_require$: (name: string) => PrimitiveFeature
 
-type NativeGlobal = typeof globalThis & { __canopusAstrolinkFacade?: AstrolinkFacade }
+type NativeGlobal = typeof globalThis & {
+  __canopusAstrolinkFacade?: AstrolinkFacade
+  __canopusAstrolinkNative?: PrimitiveFeature
+  aiot?: { canopusAstrolink?: PrimitiveFeature }
+}
 const nativeGlobal = globalThis as NativeGlobal
 
 export function loadAstrolink(): AstrolinkFacade {
   // Both generated app/page bundles share this slot and one primitive subscription.
   if (!nativeGlobal.__canopusAstrolinkFacade) {
-    nativeGlobal.__canopusAstrolinkFacade = new AstrolinkFacade($app_require$("@app-module/canopus.astrolink"))
+    const primitive = nativeGlobal.aiot?.canopusAstrolink
+      ?? nativeGlobal.__canopusAstrolinkNative
+      ?? $app_require$("@app-module/canopus.astrolink")
+    nativeGlobal.__canopusAstrolinkFacade = new AstrolinkFacade(primitive)
   }
   return nativeGlobal.__canopusAstrolinkFacade
 }

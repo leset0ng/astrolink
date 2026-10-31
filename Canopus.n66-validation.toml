@@ -1,0 +1,17 @@
+schema = 1
+
+[module]
+id = "astrolink"
+version = "0.1.0"
+version_code = 67
+kind = "target"
+language = "rust"
+lifecycle = "resident-after-activation"
+canopus_abi = "2"
+description = "QuickApp peer BLE discovery and bidirectional LE CoC messaging"
+
+[build]
+sources = ["Cargo.toml"]
+
+[targets]
+include = ["xiaomi-band-9-3.1.32"]

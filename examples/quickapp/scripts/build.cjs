@@ -3,19 +3,19 @@ const path = require("node:path")
 const { execFileSync } = require("node:child_process")
 const os = require("node:os")
 const variant = process.argv[2]
-if (!["source", "bytecode", "probe"].includes(variant)) throw new Error("expected source, bytecode or probe")
+if (!["source", "bytecode", "probe", "peer"].includes(variant)) throw new Error("expected source, bytecode, probe or peer")
 const root = path.resolve(__dirname, "..")
 const dist = path.join(root, "dist")
 // The toolkit replaces dist wholesale; keep all named package variants.
 const previous = new Map()
-for (const name of ["astrolink-example-source.rpk", "astrolink-example-bytecode.rpk", "astrolink-probe-source.rpk"]) {
+for (const name of ["astrolink-example-source.rpk", "astrolink-example-bytecode.rpk", "astrolink-probe-source.rpk", "astrolink-peer-source.rpk"]) {
   const file = path.join(dist, name)
   if (fs.existsSync(file)) previous.set(name, fs.readFileSync(file))
 }
 let temporary
 try {
   let buildRoot = root
-  if (variant === "probe") {
+  if (variant === "probe" || variant === "peer") {
     temporary = fs.mkdtempSync(path.join(os.tmpdir(), "astrolink-probe-build-"))
     buildRoot = temporary
     fs.cpSync(path.join(root, "src"), path.join(buildRoot, "src"), { recursive: true })
@@ -25,8 +25,9 @@ try {
     fs.symlinkSync(path.join(root, "node_modules"), path.join(buildRoot, "node_modules"), "dir")
     const manifestPath = path.join(buildRoot, "src/manifest.json")
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
-    manifest.package = "com.canopus.astrolink.probe"
-    manifest.router.entry = "pages/probe"
+    manifest.package = variant === "peer" ? "com.canopus.astrolink.peer" : "com.canopus.astrolink.probe"
+    manifest.router.entry = variant === "peer" ? "pages/peer" : "pages/probe"
+    if (variant === "peer") manifest.router.pages["pages/peer"] = { component: "peer" }
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
   }
   execFileSync(process.execPath, [require.resolve("aiot-toolkit/lib/bin.js"), "build",
@@ -38,7 +39,10 @@ try {
   const bytes = fs.readFileSync(built)
   fs.mkdirSync(dist, { recursive: true })
   for (const [name, previousBytes] of previous) fs.writeFileSync(path.join(dist, name), previousBytes)
-  const output = path.join(dist, variant === "probe" ? "astrolink-probe-source.rpk" : `astrolink-example-${variant}.rpk`)
+  const outputName = variant === "probe" || variant === "peer"
+    ? `astrolink-${variant}-source.rpk`
+    : `astrolink-example-${variant}.rpk`
+  const output = path.join(dist, outputName)
   fs.writeFileSync(output, bytes)
   console.log(`Preserved ${output}`)
 } finally {

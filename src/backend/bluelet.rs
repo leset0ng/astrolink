@@ -24,14 +24,19 @@ struct GapPipe(UnsafeCell<crate::loop_dispatch::PipeWake>);
 unsafe impl Sync for GapPipe {}
 static GAP_PIPE: GapPipe = GapPipe(UnsafeCell::new(crate::loop_dispatch::PipeWake::EMPTY));
 static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
+#[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+static GAP_WAKE_STATE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 extern "C" fn adapter_state_changed(_: usize, _: i32) {}
 // Only state changes are needed. Pairing and connection callbacks stay stock.
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 #[repr(C)]
 struct AdapterCallbacks {
     state: Option<extern "C" fn(usize, i32)>,
     reserved: [Option<unsafe extern "C" fn()>; 15],
 }
+#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
 static ADAPTER_CALLBACKS: AdapterCallbacks = AdapterCallbacks {
     state: Some(adapter_state_changed),
     reserved: [None; 15],
@@ -128,6 +133,10 @@ unsafe fn pointer(address: usize) -> usize {
     ptr::read_volatile(address as *const usize)
 }
 fn emit(event: Event<'_>) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        crate::qjs::trace(330);
+    }
     let value = SINK.load(Ordering::Acquire);
     if value != 0 {
         unsafe {
@@ -255,6 +264,28 @@ pub fn acquire(id: SessionId) -> Result<Service, Error> {
     Err(Error::Busy)
 }
 
+/// Run by the Supervisor background timer on the Bluetooth owner task.
+/// The owner stays alive during this synchronous capture, which holds its
+/// filelist lock; no foreign task descriptor table is ever consulted.
+#[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+pub(crate) unsafe fn prepare_gap_wake() {
+    crate::qjs::trace(60);
+    if GAP_WAKE_STATE.load(Ordering::Acquire) == 1 {
+        return;
+    }
+    let business_loop = abi::gap_loop();
+    let result = if business_loop == 0 {
+        Err(-16)
+    } else {
+        (*GAP_PIPE.0.get()).capture_btservice(business_loop)
+    };
+    crate::qjs::trace(if result == Ok(()) { 61 } else { 62 });
+    if let Err(error) = result {
+        crate::qjs::trace(error as u32);
+    }
+    GAP_WAKE_STATE.store(if result == Ok(()) { 1 } else { 2 }, Ordering::Release);
+}
+
 pub fn client_ready() -> bool {
     CLIENT.load(Ordering::Acquire) != 0
 }
@@ -262,6 +293,10 @@ pub fn client_ready() -> bool {
 pub fn ensure_client() -> Result<(), Error> {
     if client_ready() {
         return Ok(());
+    }
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        prepare_gap_wake();
     }
     if CLIENT_STARTING.swap(1, Ordering::AcqRel) != 0 {
         // The first caller publishes either ClientReady or ClientFailed. All
@@ -273,20 +308,43 @@ pub fn ensure_client() -> Result<(), Error> {
         // loop. Creating a second client would duplicate the IPC identity and
         // can block while starting another loop. We only add our own callback
         // registration; the stock callback table remains untouched.
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
         let client = unsafe { pointer(abi::D_ADAPTER_INSTANCE) };
+        // Legacy GAP owner zero is a valid registered client, not a null IPC
+        // pointer. CLIENT stores one as its published sentinel on this target;
+        // adapter() translates it back to the native owner before calls.
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        let client = 0usize;
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
         if client == 0 {
             return Err(Error::NotReady);
         }
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
         let business_loop = unsafe { pointer(client + abi::ADAPTER_LOOP) };
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        let business_loop = unsafe { abi::gap_loop() };
         if business_loop == 0 {
             return Err(Error::NotReady);
         }
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        {
+            // The first Supervisor owner tick captures this pipe on its task.
+            let wake = GAP_WAKE_STATE.load(Ordering::Acquire);
+            if wake != 1 {
+                unsafe {
+                    crate::qjs::trace(63 + wake as u32);
+                }
+                return Err(Error::NotReady);
+            }
+        }
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
         unsafe {
             (*GAP_PIPE.0.get())
                 .capture_default_loop(business_loop)
                 .map_err(Error::Backend)?;
         }
         if ADAPTER_REGISTERED.load(Ordering::Acquire) == 0 {
+            #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
             let registration = unsafe {
                 fw!(
                     abi::F_ADAPTER_REGISTER,
@@ -295,11 +353,24 @@ pub fn ensure_client() -> Result<(), Error> {
                     (&ADAPTER_CALLBACKS as *const AdapterCallbacks).cast()
                 )
             };
+            #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+            let registration = unsafe {
+                crate::qjs::trace(66);
+                let status = abi::gap_register(client, abi::gap_owner_callbacks(client));
+                crate::qjs::trace(status as u32);
+                if status != 0 {
+                    0
+                } else {
+                    1
+                }
+            };
             if registration == 0 {
                 return Err(Error::Busy);
             }
             ADAPTER_REGISTERED.store(registration, Ordering::Release);
         }
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        let client = 1usize;
         match CLIENT.compare_exchange(0, client, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => {}
             Err(existing) if existing == client => {}
@@ -320,41 +391,46 @@ fn adapter() -> Result<usize, Error> {
     if adapter == 0 {
         return Err(Error::Busy);
     }
-    unsafe {
-        crate::qjs::trace(adapter as u32);
-        crate::qjs::trace(
-            ptr::read_unaligned((adapter + abi::ADAPTER_STATE_WORD) as *const i32) as u32,
-        );
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    {
+        if unsafe { abi::gap_ready() } {
+            Ok(0)
+        } else {
+            Err(Error::NotReady)
+        }
     }
-    let state = unsafe {
-        fw!(
-            abi::F_ADAPTER_GET_STATE,
-            unsafe extern "C" fn(usize) -> i32,
-            adapter
-        )
-    };
-    unsafe {
-        crate::qjs::trace(200 + state as u32);
-    }
-    if state == 0 {
-        let result = unsafe {
+    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+    {
+        let state = unsafe {
             fw!(
-                abi::F_ADAPTER_ENABLE,
+                abi::F_ADAPTER_GET_STATE,
                 unsafe extern "C" fn(usize) -> i32,
                 adapter
             )
         };
         unsafe {
-            crate::qjs::trace(result as u32);
+            crate::qjs::trace(200 + state as u32);
         }
-        if result != 0 {
-            return Err(Error::Backend(result));
+        if state == 0 {
+            let result = unsafe {
+                fw!(
+                    abi::F_ADAPTER_ENABLE,
+                    unsafe extern "C" fn(usize) -> i32,
+                    adapter
+                )
+            };
+            unsafe {
+                crate::qjs::trace(result as u32);
+            }
+            if result != 0 {
+                return Err(Error::Backend(result));
+            }
         }
+        if state != abi::ADAPTER_READY_STATE {
+            return Err(Error::NotReady);
+        }
+        Ok(adapter)
     }
-    if state != abi::ADAPTER_READY_STATE {
-        return Err(Error::NotReady);
-    }
-    Ok(adapter)
 }
 
 // Invoke synchronous GAP IPC only on the client's business loop. The
@@ -367,20 +443,42 @@ fn start_scan_owner(service: Service) -> Result<(), Error> {
         .scan
         .compare_exchange(0, STARTING, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| Error::Busy)?;
-    // Stock MiWear client parameters: mode2, legacy0, active1, PHY1M0, policy0.
-    let params = [2u8, 0, 1, 0, 0];
-    const _: () = assert!(abi::SCAN_PARAM_SIZE == 5);
+    #[cfg(not(feature = "legacy-host"))]
+    let handle = {
+        // Stock MiWear parameters: mode2, legacy0, active1, PHY1M0, policy0.
+        let params = [2u8, 0, 1, 0, 0];
+        const _: () = assert!(abi::SCAN_PARAM_SIZE == 5);
+        unsafe {
+            fw!(
+                abi::F_SCAN_CREATE,
+                unsafe extern "C" fn(usize, *const u8, *const u8, *const ScanCallbacks) -> usize,
+                adapter,
+                params.as_ptr(),
+                ptr::null(),
+                &SCAN_CALLBACKS[service.slot as usize]
+            )
+        }
+    };
+    #[cfg(feature = "legacy-host")]
     let handle = unsafe {
-        fw!(
-            abi::F_SCAN_CREATE,
-            unsafe extern "C" fn(usize, *const u8, *const u8, *const ScanCallbacks) -> usize,
+        abi::create_scan(
             adapter,
-            params.as_ptr(),
-            ptr::null(),
-            &SCAN_CALLBACKS[service.slot as usize]
+            (&SCAN_CALLBACKS[service.slot as usize] as *const ScanCallbacks).cast(),
         )
     };
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    crate::activation_detail(301);
     if handle == 0 {
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        crate::activation_detail(302);
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        let error = unsafe { abi::take_gap_error() };
+        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+        let error = Error::Busy;
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        state.scan.store(0, Ordering::Release);
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        crate::activation_detail(302);
         unsafe {
             crate::qjs::trace(210);
         }
@@ -388,9 +486,10 @@ fn start_scan_owner(service: Service) -> Result<(), Error> {
             .scan
             .compare_exchange(STARTING, 0, Ordering::AcqRel, Ordering::Acquire)
             .ok();
-        return Err(Error::Busy);
+        return Err(error);
     }
-    // An early failure callback may already have cleared the handle.
+    // A native callback may already have published the token. Otherwise retain
+    // the exact legacy index+generation token for report and stop matching.
     state
         .scan
         .compare_exchange(STARTING, handle, Ordering::AcqRel, Ordering::Acquire)
@@ -411,6 +510,10 @@ fn stop_scan_owner(service: Service) -> Result<(), Error> {
         return Ok(());
     }
     let adapter = CLIENT.load(Ordering::Acquire);
+    #[cfg(not(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-redmi-watch-6-3-100-043"
+    )))]
     let result = unsafe {
         fw!(
             abi::F_SCAN_STOP,
@@ -419,6 +522,11 @@ fn stop_scan_owner(service: Service) -> Result<(), Error> {
             handle
         )
     };
+    #[cfg(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-redmi-watch-6-3-100-043"
+    ))]
+    let result = unsafe { abi::stop_scan(adapter, handle) };
     if result != 0 {
         state.scan_stopping.store(0, Ordering::Release);
         return Err(Error::Backend(result));
@@ -426,12 +534,20 @@ fn stop_scan_owner(service: Service) -> Result<(), Error> {
     Ok(())
 }
 fn start_advertising_owner(service: Service, data: &[u8]) -> Result<(), Error> {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        crate::qjs::trace(350);
+    }
     let _operation = pin(service, false)?;
     if data.len() > 31 || data.is_empty() {
         return Err(Error::InvalidArgument);
     }
     let state = valid(service, false)?;
     if state.psm.load(Ordering::Acquire) == 0 {
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        unsafe {
+            crate::qjs::trace(351);
+        }
         return Err(Error::Busy);
     }
     let adapter = adapter()?;
@@ -445,6 +561,7 @@ fn start_advertising_owner(service: Service, data: &[u8]) -> Result<(), Error> {
     params[abi::ADV_PARAM_TX_POWER] = 0xf6; // tx power -10dBm, same stock payment/unlock policy
     let interval = abi::ADV_PARAM_INTERVAL;
     params[interval..interval + 4].copy_from_slice(&320u32.to_le_bytes()); // 200ms at 0.625ms units
+    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
     let handle = unsafe {
         fw!(
             abi::F_ADVERTISING_CREATE,
@@ -464,6 +581,15 @@ fn start_advertising_owner(service: Service, data: &[u8]) -> Result<(), Error> {
             ptr::null(),
             0,
             &ADV_CALLBACKS[service.slot as usize]
+        )
+    };
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    let handle = unsafe {
+        abi::create_advertising(
+            adapter,
+            (&ADV_CALLBACKS[service.slot as usize] as *const AdvCallbacks).cast(),
+            data.as_ptr(),
+            data.len() as u32,
         )
     };
     if handle == 0 {
@@ -492,7 +618,14 @@ fn stop_advertising_owner(service: Service) -> Result<(), Error> {
     if state.adv_stopping.swap(1, Ordering::AcqRel) != 0 {
         return Ok(());
     }
+    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
     let adapter = CLIENT.load(Ordering::Acquire);
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    let adapter = 0usize;
+    #[cfg(not(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-redmi-watch-6-3-100-043"
+    )))]
     let result = unsafe {
         fw!(
             abi::F_ADVERTISING_STOP,
@@ -501,6 +634,11 @@ fn stop_advertising_owner(service: Service) -> Result<(), Error> {
             handle
         )
     };
+    #[cfg(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-redmi-watch-6-3-100-043"
+    ))]
+    let result = unsafe { abi::stop_advertising(adapter, handle) };
     if result != 0 {
         state.adv_stopping.store(0, Ordering::Release);
         return Err(Error::Backend(result));
@@ -523,17 +661,33 @@ struct AdvCallbacks {
     stopped: extern "C" fn(usize, u8),
 }
 fn scan_report(index: usize, handle: usize, report: *const u8) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        crate::qjs::trace(371);
+    }
     if STATE[index].scan.load(Ordering::Acquire) != handle {
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        unsafe {
+            crate::qjs::trace(372);
+        }
         return;
     }
     if report.is_null() || STATE[index].closing.load(Ordering::Acquire) != 0 {
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        unsafe {
+            crate::qjs::trace(373);
+        }
         return;
     }
     unsafe {
         let len = *report.add(abi::SCAN_REPORT_LENGTH) as usize;
         if len > 31 {
+            #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+            crate::qjs::trace(374);
             return;
         }
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        crate::qjs::trace(375);
         let mut address = [0; 6];
         ptr::copy_nonoverlapping(
             report.add(abi::SCAN_REPORT_ADDRESS),
@@ -553,6 +707,8 @@ fn scan_report(index: usize, handle: usize, report: *const u8) {
     }
 }
 fn scan_started(index: usize, handle: usize, status: u8) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    crate::activation_detail(310 + status as i32);
     let state = &STATE[index];
     let expected = state.scan.load(Ordering::Acquire);
     if expected != STARTING && expected != handle {
@@ -571,6 +727,8 @@ fn scan_started(index: usize, handle: usize, status: u8) {
     retire(index);
 }
 fn scan_stopped(index: usize) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    crate::activation_detail(320);
     STATE[index].scan.store(0, Ordering::Release);
     STATE[index].scan_stopping.store(0, Ordering::Release);
     emit(Event::ScanStopped {
@@ -616,6 +774,9 @@ macro_rules! callbacks {
         }
         extern "C" fn $scan_stop(h: usize) {
             let _guard = CallbackGuard::enter($i);
+            // The legacy target adapter has already translated the native
+            // handle into this common token. Forwarding it through the common
+            // callback table again would recurse into this same function.
             if STATE[$i].scan.load(Ordering::Acquire) == h {
                 scan_stopped($i);
             }
@@ -820,7 +981,14 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         let business_loop = if client == 0 {
             0
         } else {
-            unsafe { pointer(client + abi::ADAPTER_LOOP) }
+            #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+            {
+                unsafe { pointer(client + abi::ADAPTER_LOOP) }
+            }
+            #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+            {
+                unsafe { abi::gap_loop() }
+            }
         };
         if business_loop == 0 {
             unsafe { free(work.cast()) };
@@ -990,11 +1158,17 @@ pub fn close(service: Service) -> Result<(), Error> {
 }
 extern "C" fn gap_prepare(_: *mut Work) {}
 extern "C" fn gap_done(work: *mut Work, status: i32) {
+    #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+    unsafe {
+        crate::qjs::trace(300);
+    }
     if work.is_null() {
         return;
     }
     unsafe {
         let service = (*work).service;
+        #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+        crate::qjs::trace(300);
         let stopping = matches!((*work).action, Action::StopScan | Action::StopAdvertising);
         let result = if status != 0 {
             Err(Error::Backend(status))
@@ -1201,6 +1375,8 @@ unsafe fn perform(owner: usize, work: &Work) -> Result<(), Error> {
         Action::StartScan => start_scan_owner(work.service)?,
         Action::StopScan => stop_scan_owner(work.service)?,
         Action::StartAdvertising { length } => {
+            #[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+            crate::qjs::trace(349);
             start_advertising_owner(work.service, &work.data[..length as usize])?
         }
         Action::StopAdvertising => stop_advertising_owner(work.service)?,
@@ -1504,6 +1680,7 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
             // its live channel intact until the owner handler returns;
             // perform(Connect) handles a concurrent close immediately then.
         }
+        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_OPEN => {
             let cid = word(p, abi::COC_EV_COMPLETE_CID);
             if let Some(channel) = (*state.owner.get())
@@ -1542,6 +1719,7 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
+        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_DATA | abi::COC_EVENT_CREDITS => {
             let cid = word(
                 p,
@@ -1589,11 +1767,48 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
+        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_LOCAL_FLOW => {
             // C86DA74 emits a separately allocated six-byte local flow report.
             // Legacy LE submission is governed by event17 credits; this event
             // changes neither connection state nor responsibility for an SDU.
         }
+        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+        abi::COC_EVENT_DATA => {
+            let cid = word(p, abi::COC_EV_DATA_CID);
+            if let Some(channel) = (*state.owner.get())
+                .channels
+                .iter()
+                .find(|c| c.cid == cid)
+                .copied()
+            {
+                if let Some(link) = channel.link {
+                    let end = word(p, abi::COC_EV_DATA_END);
+                    let offset = word(p, abi::COC_EV_DATA_OFFSET);
+                    if end < offset || end - offset > RECEIVE_MTU {
+                        emit(Event::Failed {
+                            session: session(index),
+                            link: Some(link),
+                            operation: 0,
+                            error: Error::ReceiveOverflow,
+                        });
+                        let _ = disconnect_cid(owner, cid);
+                    } else {
+                        emit(Event::Data {
+                            link,
+                            cid,
+                            data: ::core::slice::from_raw_parts(
+                                p.add(abi::COC_EV_DATA_BASE + offset as usize),
+                                (end - offset) as usize,
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+        _ => {}
+        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         _ => { /* no event4/5 producer exists in this legacy LE channel path */ }
     }
     if event == abi::COC_EVENT_CREDITS {

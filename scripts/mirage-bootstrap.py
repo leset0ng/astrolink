@@ -162,7 +162,7 @@ def stage_assets(library, device, target, assets):
     bridge = connect(library, device, BRIDGE)
     try:
         faces = bridge.call('watchfaces') or []
-        identifier = next((face['id'] for face in faces if face.get('id') == '00000000000l'), None)
+        identifier = next((face['id'] for face in faces if face.get('name') == 'Canopus'), None)
         if identifier is None:
             identifier = bridge.call('install', {'path': str(assets / '未命名表盘.bin'),
                                                  'kind': 'watchface'})['watchfaceId']
@@ -174,6 +174,9 @@ def stage_assets(library, device, target, assets):
     for suffix in ASSET_SUFFIXES:
         local = assets / f'canopus_{suffix}-{target}.bin'
         if not local.is_file():
+            if suffix == 'boot':
+                # The Band 9 staged loader has no persistent boot patch.
+                continue
             raise SystemExit(f'missing installer asset {local}')
         ctl('fs', 'put', device, 'nand_data', local, f'{market}/{local.name}')
     print(f'staged {target} assets into {market}')
@@ -191,6 +194,7 @@ def activate(device, target, library, seconds, require_module=True):
     waiting for a module state there would never succeed.
     """
     pressed_enable = False
+    retries = 0
     for _cycle in range(2):
         ctl('shutdown', device, check=False)
         ctl('boot', device, '--no-shell')
@@ -225,6 +229,10 @@ def activate(device, target, library, seconds, require_module=True):
                     elif state.get('state') == ACTIVE:
                         print(f'module active: {json.dumps(state)}')
                         return True
+                    elif state.get('state') == 15 and retries < 1:
+                        bridge.call('canopusActivate', {'module': 'astrolink'})
+                        retries += 1
+                        print(f'retried activation in place after error {state.get("activationError")}')
                     elif state.get('state') in (3, 5) and not pressed_enable:
                         bridge.call('canopusSetEnabled', {'module': 'astrolink', 'enabled': True})
                         pressed_enable = True
@@ -241,10 +249,40 @@ def activate(device, target, library, seconds, require_module=True):
     return False
 
 
-def install(device, library, package):
+def install(device, library, package, target):
     ctl('tap', device, *WAKE, check=False)
     bridge = connect(library, device, BRIDGE)
     try:
+        state = bridge.call('canopusQueryModule', {'module': 'astrolink'})
+        if bridge.call('canopusDeviceInfo').get('safeMode'):
+            bridge.call('canopusExitSafeMode', {'action': 'keep'})
+            print('exiting safe mode with keep; rebooting before install')
+            bridge.call('disconnect')
+            if not activate(device, target, library, 60, require_module=False):
+                raise SystemExit('Supervisor did not return after safe-mode exit')
+            bridge = connect(library, device, BRIDGE)
+            state = bridge.call('canopusQueryModule', {'module': 'astrolink'})
+        if state and state.get('version') == package_version(package):
+            if state.get('state') == 13:
+                print(f'already resident at version {state.get("version")}; skipping same-version install')
+                return
+            bridge.call('canopusRemove', {'module': 'astrolink'})
+            bridge.call('disconnect')
+            if not activate(device, target, library, 60, require_module=False):
+                raise SystemExit('Supervisor did not return before same-version reinstall')
+            bridge = connect(library, device, BRIDGE)
+            state = bridge.call('canopusQueryModule', {'module': 'astrolink'})
+        if state and state.get('state') in (15, 20):
+            # REMOVE is a boot intent on this Supervisor. Apply it before
+            # installing the replacement generation, rather than reinstalling
+            # into the failed slot in the same boot.
+            if state.get('state') != 20:
+                bridge.call('canopusRemove', {'module': 'astrolink'})
+            print('removing old generation; rebooting before reinstall')
+            bridge.call('disconnect')
+            if not activate(device, target, library, 60, require_module=False):
+                raise SystemExit('Supervisor did not return after failed-generation removal')
+            bridge = connect(library, device, BRIDGE)
         print(f'module installed: {json.dumps(bridge.call("install", {"path": str(package), "kind": "canopus"}))}')
     finally:
         bridge.call('disconnect')
@@ -305,7 +343,12 @@ def main():
 
     if args.module:
         expected = package_version(args.module)
-        install(args.device, args.library, args.module)
+        install(args.device, args.library, args.module, args.target)
+
+        # INSTALL of a resident module stages a new generation. Always boot it
+        # before judging activation; a safe-mode fallback must not be retried
+        # against the old resident image.
+        ctl('shutdown', args.device, check=False)
 
         def resident():
             if not activate(args.device, args.target, args.library, args.wait):
@@ -321,7 +364,7 @@ def main():
             print(f'resident version {state.get("version")} != package {expected}; '
                   'removing and reinstalling')
             remove(args.device, args.library)
-            install(args.device, args.library, args.module)
+            install(args.device, args.library, args.module, args.target)
             state = resident()
             if state.get('version') != expected:
                 raise SystemExit(f'resident module is version {state.get("version")}, '
