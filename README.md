@@ -90,9 +90,14 @@ native module adds no application ACK or message-fragment protocol.
 - One `send` is one complete CoC SDU, including empty SDUs. Sending is limited
   to the smaller of the remote receive MTU and **512 bytes**. Local receive
   MTU is independently configured as 512 bytes.
-- Each Link has four pending sends and four buffered received messages.
-  Transmit queue saturation returns `BUSY`; receive overflow closes only that
-  Link with `RECEIVE_OVERFLOW`.
+- Each Link has four pending sends and four buffered received messages. All
+  Links share a fixed pool of **40 messages** for both directions; the global
+  budget can be exhausted before a Link reaches its per-direction bound.
+  Transmit queue or pool saturation returns `BUSY`; receive queue or pool
+  overflow closes only that Link with `RECEIVE_OVERFLOW`, without truncation
+  or silent drops. A pending send retains its slot until host submission is
+  confirmed, so `BUSY` retries keep the complete SDU. Reading a received message
+  or closing its Link releases the corresponding slots.
 - `send` resolves when the firmware host takes responsibility for the SDU.
   It does not assert that remote JavaScript or the remote application consumed it.
 - Scan reports are filtered by service and deduplicated by peer/data/SPSM;

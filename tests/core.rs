@@ -25,9 +25,9 @@ fn discover<const N: usize>(engine: &mut Engine<N>, session: SessionId, remote: 
         engine.scan_started(session, Ok(())).unwrap();
     }
     let service = engine.session(session).unwrap().service.as_str().to_owned();
-    engine
-        .advertisement(session, remote, -40, &advertising(&service, &[7], 0x80))
-        .unwrap();
+    engine.advertisement(session, remote, -40, &advertising(&service, &[7], 0x80));
+    // Reconnecting to a cached peer may suppress a duplicate advertisement event.
+    assert!(engine.session(session).unwrap().peer(remote).is_some());
 }
 
 fn open<const N: usize>(
@@ -54,6 +54,20 @@ fn open<const N: usize>(
         })
     );
     link
+}
+
+fn saturated_pool() -> (Engine<16>, SessionId, [LinkId; 16]) {
+    let mut engine = Engine::<16>::new();
+    let session = engine.create_session(1, "chat").unwrap();
+    let links = std::array::from_fn(|i| open(&mut engine, session, peer(i as u8), 0x40 + i as u16));
+    assert_eq!(POOL, 5 * 2 * QUEUE_DEPTH);
+    for (i, &link) in links[..5].iter().enumerate() {
+        for n in 0..QUEUE_DEPTH {
+            engine.send(link, &[i as u8, n as u8]).unwrap();
+            engine.receive(link, &[0x80 | i as u8, n as u8]).unwrap();
+        }
+    }
+    (engine, session, links)
 }
 
 #[test]
@@ -233,7 +247,9 @@ fn one_send_is_one_sdu_and_respects_the_remote_receive_limit() {
     let session = engine.create_session(1, "chat").unwrap();
     let id = open(&mut engine, session, peer(1), 0x40);
     for size in [0, 1, 511, 512] {
-        let bytes = vec![size as u8; size];
+        let bytes: Vec<_> = (0..size)
+            .map(|i| (i as u8).wrapping_add(size as u8))
+            .collect();
         let send = engine.send(id, &bytes).unwrap();
         let tx = engine.next_transmission().unwrap();
         assert_eq!(tx.send, Some(send));
@@ -241,8 +257,16 @@ fn one_send_is_one_sdu_and_respects_the_remote_receive_limit() {
         // Looking at a blocked host transmission does not consume or complete it.
         let retry = engine.next_transmission().unwrap();
         assert_eq!(retry.send, Some(send));
+        assert_eq!(retry.message.as_bytes(), bytes);
         engine.transmission_submitted(id, Some(send)).unwrap();
         assert!(engine.next_transmission().is_none());
+        engine.receive(id, &bytes).unwrap();
+        let received = engine.take_received(id).unwrap().unwrap();
+        assert_eq!(received.as_bytes(), bytes);
+        assert!(engine.take_received(id).unwrap().is_none());
+        // Both values remain owned after their pool slots are released and reused.
+        assert_eq!(tx.message.as_bytes(), bytes);
+        assert_eq!(retry.message.as_bytes(), bytes);
     }
     assert_eq!(engine.send(id, &[0; 513]), Err(Error::InvalidArgument));
 }
@@ -485,7 +509,183 @@ fn failed_or_cancelled_advertising_never_admits_incoming_coc() {
 }
 
 #[test]
+fn exhausted_pool_returns_busy_until_submission_or_receive_releases_a_slot() {
+    let (mut engine, _, links) = saturated_pool();
+    let waiting = links[5];
+    assert_eq!(engine.send(waiting, &[0; 513]), Err(Error::InvalidArgument));
+    assert_eq!(engine.send(waiting, b"waiting"), Err(Error::Busy));
+    let tx = engine.next_transmission().unwrap();
+    let retry = engine.next_transmission().unwrap();
+    assert_eq!(tx.message.as_bytes(), &[0, 0]);
+    assert_eq!(retry.message.as_bytes(), &[1, 0]);
+    assert_eq!(engine.send(waiting, b"waiting"), Err(Error::Busy));
+    assert_eq!(
+        engine.transmission_submitted(tx.link, Some(SendId(u32::MAX))),
+        Err(Error::Disconnected)
+    );
+    assert_eq!(engine.send(waiting, b"waiting"), Err(Error::Busy));
+    engine.transmission_submitted(tx.link, tx.send).unwrap();
+    engine.send(waiting, b"reused TX slot").unwrap();
+    assert_eq!(engine.send(waiting, b"still full"), Err(Error::Busy));
+    let received = engine.take_received(links[0]).unwrap().unwrap();
+    assert_eq!(received.as_bytes(), &[0x80, 0]);
+    engine.receive(waiting, b"reused RX slot").unwrap();
+    assert_eq!(engine.send(waiting, b"still full"), Err(Error::Busy));
+    assert_eq!(
+        engine.take_received(waiting).unwrap().unwrap().as_bytes(),
+        b"reused RX slot"
+    );
+    assert_eq!(tx.message.as_bytes(), &[0, 0]);
+    assert_eq!(received.as_bytes(), &[0x80, 0]);
+}
+
+#[test]
+fn exhausted_pool_closes_only_the_receiving_link_with_receive_overflow() {
+    let (mut engine, session, links) = saturated_pool();
+    let overflowed = links[5];
+    assert_eq!(
+        engine.receive(overflowed, b"overflow"),
+        Err(Error::ReceiveOverflow)
+    );
+    assert_eq!(engine.link(overflowed).unwrap().state, LinkState::Closed);
+    assert_eq!(
+        engine.take_event(),
+        Some(Event::Disconnected {
+            link: overflowed,
+            session,
+            reason: Error::ReceiveOverflow,
+        })
+    );
+    assert_eq!(engine.next_disconnect(), Some((overflowed, Some(0x45))));
+    for &link in links.iter().filter(|&&link| link != overflowed) {
+        assert_eq!(engine.link(link).unwrap().state, LinkState::Connected);
+    }
+    assert_eq!(engine.send(links[6], b"still full"), Err(Error::Busy));
+    engine.take_received(links[0]).unwrap().unwrap();
+    engine.receive(links[6], b"survivor").unwrap();
+    assert_eq!(
+        engine.take_received(links[6]).unwrap().unwrap().as_bytes(),
+        b"survivor"
+    );
+}
+
+#[test]
+fn closing_links_with_full_tx_and_rx_queues_reclaims_the_pool_for_100_cycles() {
+    let mut engine = Engine::<6>::new();
+    let session = engine.create_session(1, "chat").unwrap();
+    let survivor = open(&mut engine, session, peer(250), 0x50);
+    assert_eq!(POOL, 5 * 2 * QUEUE_DEPTH);
+    for cycle in 0..100 {
+        let links: [LinkId; 5] =
+            std::array::from_fn(|i| open(&mut engine, session, peer(i as u8), 0x40 + i as u16));
+        for &link in &links {
+            for _ in 0..QUEUE_DEPTH {
+                engine.send(link, &[cycle; 512]).unwrap();
+                engine.receive(link, &[cycle; 512]).unwrap();
+            }
+        }
+        assert_eq!(engine.send(survivor, b"full"), Err(Error::Busy));
+        for link in links {
+            engine.close_link(link, Error::Disconnected).unwrap();
+            // A duplicate close must not release any slot a second time.
+            engine.close_link(link, Error::Disconnected).unwrap();
+            engine.disconnect_submitted(link).unwrap();
+            assert_eq!(
+                engine.take_event(),
+                Some(Event::Disconnected {
+                    link,
+                    session,
+                    reason: Error::Disconnected,
+                })
+            );
+        }
+        let send = engine.send(survivor, &[cycle]).unwrap();
+        let tx = engine.next_transmission().unwrap();
+        assert_eq!(tx.link, survivor);
+        assert_eq!(tx.message.as_bytes(), &[cycle]);
+        engine.transmission_submitted(survivor, Some(send)).unwrap();
+        engine.receive(survivor, &[cycle]).unwrap();
+        assert_eq!(
+            engine.take_received(survivor).unwrap().unwrap().as_bytes(),
+            &[cycle]
+        );
+    }
+}
+
+#[test]
+fn sixteen_link_entries_all_allocate_close_and_reuse() {
+    fn assert_copy<T: Copy>() {}
+    assert_copy::<Link>();
+    let mut engine = Engine::<16>::new();
+    let session = engine.create_session(1, "chat").unwrap();
+    let mut previous = [None; 16];
+    for _ in 0..2 {
+        let links: [LinkId; 16] =
+            std::array::from_fn(|i| open(&mut engine, session, peer(i as u8), 0x40 + i as u16));
+        for (i, &link) in links.iter().enumerate() {
+            assert_ne!(previous[i], Some(link));
+            engine.send(link, &[i as u8]).unwrap();
+            engine.receive(link, &[0x80 | i as u8]).unwrap();
+        }
+        discover(&mut engine, session, peer(16));
+        assert_eq!(engine.connect(session, peer(16), 0), Err(Error::Busy));
+        for (i, &link) in links.iter().enumerate() {
+            assert_eq!(
+                engine.take_received(link).unwrap().unwrap().as_bytes(),
+                &[0x80 | i as u8]
+            );
+            engine.channel_closed(link, Error::Disconnected).unwrap();
+            assert_eq!(
+                engine.take_event(),
+                Some(Event::Disconnected {
+                    link,
+                    session,
+                    reason: Error::Disconnected,
+                })
+            );
+            previous[i] = Some(link);
+        }
+    }
+}
+
+#[test]
+fn closing_a_session_releases_all_its_pool_slots() {
+    let (mut engine, session, links) = saturated_pool();
+    engine.close_session(session).unwrap();
+    for link in links {
+        engine.disconnect_submitted(link).unwrap();
+        assert!(matches!(
+            engine.take_event(),
+            Some(Event::Disconnected { .. })
+        ));
+    }
+    let new_session = engine.create_session(2, "next").unwrap();
+    for i in 0..5 {
+        let link = open(&mut engine, new_session, peer(i), 0x60 + u16::from(i));
+        for _ in 0..QUEUE_DEPTH {
+            engine.send(link, b"reused after session close").unwrap();
+            engine.receive(link, b"reused after session close").unwrap();
+        }
+    }
+}
+
+#[test]
+fn oversized_receive_closes_its_link_and_reclaims_queued_messages() {
+    let (mut engine, _, links) = saturated_pool();
+    assert_eq!(
+        engine.receive(links[0], &[0; 513]),
+        Err(Error::ReceiveOverflow)
+    );
+    for _ in 0..QUEUE_DEPTH {
+        engine.send(links[5], b"reclaimed TX").unwrap();
+        engine.receive(links[5], b"reclaimed RX").unwrap();
+    }
+    assert_eq!(engine.send(links[6], b"full again"), Err(Error::Busy));
+}
+
+#[test]
 fn core_storage_is_bounded_for_device_and_multilink_configuration() {
-    assert!(std::mem::size_of::<Engine<1>>() < 8 * 1024);
-    assert!(std::mem::size_of::<Engine<2>>() < 13 * 1024);
+    // Every engine reserves the same 40-message pool, even with a single Link.
+    assert!(std::mem::size_of::<Engine<1>>() < 22 * 1024);
+    assert!(std::mem::size_of::<Engine<2>>() < 22 * 1024);
 }

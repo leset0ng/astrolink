@@ -9,6 +9,8 @@ pub const MAX_SESSIONS: usize = 4;
 pub const MAX_PEERS: usize = 8;
 pub const MAX_MESSAGE_BYTES: usize = 512;
 pub const QUEUE_DEPTH: usize = 4;
+/// Shared TX/RX message budget across all Links, each still bounded by QUEUE_DEPTH.
+pub const POOL: usize = 40;
 pub const CONNECT_TIMEOUT_MS: u64 = 15_000;
 pub const DEVICE_MAX_LINKS: usize = 1;
 
@@ -45,6 +47,8 @@ pub struct SessionId(pub u32);
 pub struct LinkId(pub u32);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SendId(pub u32);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MessageId(pub u16);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Peer {
@@ -214,15 +218,12 @@ impl<T: Copy, const N: usize> Queue<T, N> {
         self.len -= 1;
         value
     }
-    fn clear(&mut self) {
-        *self = Self::new();
-    }
 }
 
 #[derive(Clone, Copy)]
 struct PendingSend {
     id: SendId,
-    message: Message,
+    message: MessageId,
 }
 
 #[derive(Clone, Copy)]
@@ -244,7 +245,7 @@ pub struct Link {
     close_pending: bool,
     disconnect_pending: bool,
     tx: Queue<PendingSend, QUEUE_DEPTH>,
-    rx: Queue<Message, QUEUE_DEPTH>,
+    rx: Queue<MessageId, QUEUE_DEPTH>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -279,6 +280,8 @@ pub struct Cleanup {
 pub struct Engine<const LINKS: usize> {
     sessions: [Option<Session>; MAX_SESSIONS],
     links: [Option<Link>; LINKS],
+    pool: [Option<Message>; POOL],
+    free_messages: u64,
     next_id: u32,
     round_robin: usize,
 }
@@ -294,9 +297,28 @@ impl<const LINKS: usize> Engine<LINKS> {
         Self {
             sessions: [None; MAX_SESSIONS],
             links: [None; LINKS],
+            pool: [None; POOL],
+            free_messages: (1u64 << POOL) - 1,
             next_id: 1,
             round_robin: 0,
         }
+    }
+
+    fn allocate_message(&mut self, message: Message) -> Result<MessageId, Error> {
+        if self.free_messages == 0 {
+            return Err(Error::Busy);
+        }
+        let slot = self.free_messages.trailing_zeros() as usize;
+        self.free_messages &= !(1u64 << slot);
+        self.pool[slot] = Some(message);
+        Ok(MessageId(slot as u16))
+    }
+
+    fn release_message(&mut self, id: MessageId) -> Message {
+        let slot = usize::from(id.0);
+        let message = self.pool[slot].take().expect("queued message owns a slot");
+        self.free_messages |= 1u64 << slot;
+        message
     }
 
     fn allocate_id(&mut self) -> Result<u32, Error> {
@@ -612,19 +634,27 @@ impl<const LINKS: usize> Engine<LINKS> {
         if bytes.len() > link.max_message_bytes {
             return Err(Error::InvalidArgument);
         }
-        if link.tx.len == QUEUE_DEPTH {
+        if link.tx.len == QUEUE_DEPTH || self.free_messages == 0 {
             return Err(Error::Busy);
         }
         let message = Message::new(bytes)?;
         let send = SendId(self.allocate_id()?);
-        self.link_mut(id)?
+        let message = self.allocate_message(message)?;
+        if let Err(error) = self
+            .link_mut(id)?
             .tx
-            .push(PendingSend { id: send, message })?;
+            .push(PendingSend { id: send, message })
+        {
+            self.release_message(message);
+            return Err(error);
+        }
         Ok(send)
     }
 
     /// Inspect at most one SDU per Link per pass. A BUSY backend simply leaves
     /// that transmission queued while the caller continues to the next Link.
+    /// The returned copy owns its bytes; the pool slot remains queued for retries
+    /// until transmission_submitted() confirms host acceptance.
     pub fn next_transmission(&mut self) -> Option<Transmission> {
         for _ in 0..LINKS {
             let slot = self.round_robin;
@@ -651,7 +681,8 @@ impl<const LINKS: usize> Engine<LINKS> {
                         link: link.id,
                         channel,
                         send: Some(pending.id),
-                        message: pending.message,
+                        message: self.pool[usize::from(pending.message.0)]
+                            .expect("queued message owns a slot"),
                     });
                 }
             }
@@ -675,7 +706,8 @@ impl<const LINKS: usize> Engine<LINKS> {
                 if link.state == LinkState::Connected
                     && link.tx.front().is_some_and(|p| p.id == send) =>
             {
-                link.tx.pop();
+                let pending = link.tx.pop().unwrap();
+                self.release_message(pending.message);
             }
             _ => return Err(Error::Disconnected),
         }
@@ -711,7 +743,15 @@ impl<const LINKS: usize> Engine<LINKS> {
                         return Err(Error::ReceiveOverflow);
                     }
                 };
-                if link.rx.push(message).is_err() {
+                let message = match self.allocate_message(message) {
+                    Ok(message) => message,
+                    Err(_) => {
+                        self.close_link(id, Error::ReceiveOverflow)?;
+                        return Err(Error::ReceiveOverflow);
+                    }
+                };
+                if self.link_mut(id)?.rx.push(message).is_err() {
+                    self.release_message(message);
                     self.close_link(id, Error::ReceiveOverflow)?;
                     return Err(Error::ReceiveOverflow);
                 }
@@ -731,7 +771,8 @@ impl<const LINKS: usize> Engine<LINKS> {
         if link.state != LinkState::Connected {
             return Err(Error::Disconnected);
         }
-        Ok(link.rx.pop())
+        let message = link.rx.pop();
+        Ok(message.map(|message| self.release_message(message)))
     }
 
     pub fn close_link(&mut self, id: LinkId, reason: Error) -> Result<(), Error> {
@@ -745,8 +786,14 @@ impl<const LINKS: usize> Engine<LINKS> {
         link.close_pending = true;
         // Also cancel an in-flight ACL/CoC request that does not have a CID yet.
         link.disconnect_pending = true;
-        link.rx.clear();
-        link.tx.clear();
+        let mut rx = ::core::mem::replace(&mut link.rx, Queue::new());
+        let mut tx = ::core::mem::replace(&mut link.tx, Queue::new());
+        while let Some(message) = rx.pop() {
+            self.release_message(message);
+        }
+        while let Some(pending) = tx.pop() {
+            self.release_message(pending.message);
+        }
         Ok(())
     }
 
