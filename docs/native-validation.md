@@ -305,3 +305,50 @@ repeatedly failed module installation at `STAGE_WRITE` while writing
 `.ko.upload`; `/tmp/n66-coc-v67-install/summary.json` preserves that separate
 installation blocker. No scan-report, LE connection, HELLO or SDU success is
 inferred from the lifecycle result.
+
+## v43: shared message pool, 16-entry link table, per-session channel table
+
+Two changes, each with its own host-test run before the device run:
+
+1. `dc50387` moved the 512-byte SDU buffers out of every `Link` into one fixed
+   pool of 40 messages (`MessageId` handles, free-slot bitmap). `Link` dropped
+   from 4,256 to 160 bytes. A queued SDU keeps its slot until
+   `transmission_submitted()` confirms host acceptance, so a `BUSY` retry still
+   carries the original bytes; closing a Link releases every slot its TX and RX
+   queues hold.
+2. `e3bb441` derived the per-session Bluelet channel table from
+   `DEVICE_MAX_LINKS` instead of the previous 8. A Session can own every Link,
+   and its ninth outgoing connect used to record no CID and emit no event: the
+   Link waited out the 15-second establishment deadline while the firmware-side
+   channel was left without a disconnect.
+
+Measured on the host: `Link` 4,256 -> 160 bytes, `Engine<1>` 4,784 -> 21,336,
+`Engine<16>` 68,624 -> 23,736. The pool is unconditional, so every supported
+target pays it: `.155` resident bytes 50,541 -> 70,785 (+20,244, +40%), `.data`
+9,316 -> 29,036 and now 41% of the image. Targets whose ABI reports
+`SUPPORTED = false` still build at 1.3 KB because LTO drops the untouched
+runtime static.
+
+ELF SHA-256 `be24a5e610c67ad24e14bc536572a867810e3609b483746059bd8082b84a5c05`,
+70,785 resident bytes, 1,229 relocations. Package
+`dist/astrolink-0.1.0.canopus`, 724,992 bytes, 8 targets, versionCode 43,
+package SHA-256 `043fd15ff4718bd6015aa4d648e57cb2a99016734ce3cc6f540b97536c1652cb`;
+`canopus package verify` passes.
+
+Device `astrolink-q66-155`, firmware `miwear.watch.q66tc_v4.100.155_full_f1c824fe`,
+module `version 43`, `state 13` (BOOT_RESIDENT), `activationError 0`. The probe
+reported `ok=true`, terminal `complete` and all 18 lifecycle checks passing;
+evidence is `/tmp/astrolink-astrolink-q66-155-probe`, with the 18 checks read
+from `guest-logs/ram-syslog.log`. Observed step times: capabilities 2 ms,
+6-byte service accepted 2 ms, boundary Session close 97 ms, 7-byte rejection
+2 ms, Session create 2 ms, scan start/stop 32/15 ms, repeated scan stop 7 ms,
+advertising start/stop 26/23 ms, repeated advertising stop 22 ms, Session close
+26 ms, repeated close 4 ms, Session rebuild/release 4/29/4/24 ms.
+
+This run does not repeat the v36 two-role LE CoC peer integration; that evidence
+stays attributed to v36, whose firmware call path this build preserves. The
+16 entries are a static table capacity: no run has established more than one
+Link at a time, the controller's simultaneous LE link limit is still unmeasured,
+and the +20 KB static cost has not been measured against the remaining heap.
+Bidirectional CoC, radio capacity, phone/Audio coexistence and screen-off
+stability remain the separate acceptance work listed above.

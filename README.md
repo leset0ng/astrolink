@@ -19,7 +19,10 @@ receiver, the phone connection, the Bluetooth adapter, or pairing callbacks.
 
 ## Validated build
 
-Version code **37** is the same Q66 `.155` behaviour with the per-target ABI
+Version code **43** moves the message buffers out of each Link into one shared
+40-slot pool and raises the device link table to 16 entries; it passes the
+18-check native lifecycle probe on `.155`. Version code **37** is the same Q66
+`.155` behaviour with the per-target ABI
 layout; it passes the 18-check native lifecycle probe. Version code **36** is
 the build that also passed both LE CoC connection directions in the isolated
 Mirage environment. The example
@@ -31,7 +34,7 @@ acceptance limits.
 
 Installable outputs:
 
-- Native module: `dist/astrolink-0.1.0.canopus` (version code 42).
+- Native module: `dist/astrolink-0.1.0.canopus` (version code 43).
 - npm package: `packages/astrolink/dist/canopus-astrolink-0.1.1.tgz`.
 - Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
   `astrolink-example-bytecode.rpk` in that directory.
