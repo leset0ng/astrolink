@@ -237,6 +237,9 @@ macro_rules! abi_firmware_shims {
                 release(buffer);
                 return -1;
             }
+            // Stock queue insertion preserves the node header; initialize next/prev
+            // just like the firmware node allocator before handing it to the queue.
+            core::ptr::write_bytes(allocation, 0, $crate::abi::FRAGMENT_NODE_SIZE);
             let node = allocation.add($crate::abi::FRAGMENT_NODE_PAYLOAD);
             core::ptr::write_unaligned(
                 node.add($crate::abi::FRAGMENT_NODE_BUFFER).cast::<u32>(),

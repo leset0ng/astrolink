@@ -316,7 +316,11 @@ in `0x0C862EC2`. The backend uses headroom 12 and places local CID at +4.
 stock fragment nodes at channel+4, frees the original SDU, and calls stock drain
 `0x0C86B40E`. That drain decrements peer credit queue+14 for each emitted PDU.
 Each fragment node is a normal 8-byte list payload preceded by 8-byte list
-header; node+0 points to the buffer and node+4 has first/last flags.
+header; node+0 points to the buffer and node+4 has first/last flags. The stock
+node allocator clears the header and payload before use. Explicit empty-SDU
+nodes must do the same: queue insertion preserves those links, and queue pop
+uses `next` as an address. An uninitialized heap header can therefore cause an
+invalid write and reboot.
 `0x0C862C8E(list,node)` appends the node and `0x0C86B40E(queue,channel)` handles
 framing, credits and transmission.
 
@@ -326,7 +330,11 @@ transmission. The backend instead creates the exact same stock first+last
 fragment (`flags=0x81`, two-byte SDU length 0) and appends it to the **same**
 credit-controlled queue. It uses no second HCI path or application envelope.
 The receiver at `0x0C873794` recognizes length 0 plus its two-byte SDU length
-field and emits a zero-byte event 7 normally.
+field and emits a zero-byte event 7 normally. On Band 11 `.179`, the corresponding
+queue primitives are push `0x0C8610E6` and pop `0x0C8611D4`; the latter reads
+`node-8` and writes `next-4` when it is nonzero. Run the exact-firmware
+poisoned/cleared-node regression with `python3 scripts/test-empty-sdu-queue.py
+--image PATH/vela_ap.bin`; it requires `pip install unicorn`.
 
 The stack fragment queue is not intrinsically bounded. Before handing over a
 new SDU, the backend checks that the channel's fragment queue is empty and that

@@ -435,6 +435,9 @@ pub unsafe fn queue_send(
         release(buffer);
         return -1;
     }
+    // Stock queue insertion preserves the node header; initialize next/prev
+    // just like the firmware node allocator before handing it to the queue.
+    core::ptr::write_bytes(allocation, 0, FRAGMENT_NODE_SIZE);
     let node = allocation.add(FRAGMENT_NODE_PAYLOAD);
     core::ptr::write_unaligned(
         node.add(FRAGMENT_NODE_BUFFER).cast::<u32>(),
