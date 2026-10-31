@@ -12,7 +12,7 @@ pub const QUEUE_DEPTH: usize = 4;
 /// Shared TX/RX message budget across all Links, each still bounded by QUEUE_DEPTH.
 pub const POOL: usize = 40;
 pub const CONNECT_TIMEOUT_MS: u64 = 15_000;
-pub const DEVICE_MAX_LINKS: usize = 1;
+pub const DEVICE_MAX_LINKS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {

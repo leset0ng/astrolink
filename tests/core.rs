@@ -688,4 +688,5 @@ fn core_storage_is_bounded_for_device_and_multilink_configuration() {
     // Every engine reserves the same 40-message pool, even with a single Link.
     assert!(std::mem::size_of::<Engine<1>>() < 22 * 1024);
     assert!(std::mem::size_of::<Engine<2>>() < 22 * 1024);
+    assert!(std::mem::size_of::<Engine<16>>() < 24 * 1024);
 }

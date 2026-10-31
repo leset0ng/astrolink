@@ -73,7 +73,15 @@ try {
 
 The public typed API is exported as `Astrolink`, `Session`, `Link`, `Capabilities`, `Advertisement`, and `Unsubscribe`. `AstrolinkError` exposes `code`, `nativeCode`, and `backendError`. A send resolves when the native backend takes local submission responsibility; it does not promise the peer application consumed the message.
 
-Current native limits are a 6-byte UTF-8 serviceId, 1-byte advertising data and up to 512-byte messages. Always use `getCapabilities()` and `link.maxMessageBytes`; oversized arguments reject with `INVALID_ARGUMENT` without truncation.
+Current native limits are a 6-byte UTF-8 serviceId, 1-byte advertising data,
+up to 512-byte messages and **16 Links** shared across at most **4 Sessions**.
+Each Link allows four pending sends and four buffered receives; all Links share
+one fixed pool of **40 messages** for both directions. Queue or pool exhaustion
+rejects sends with `BUSY`, or closes only the receiving Link with
+`RECEIVE_OVERFLOW`, without truncation or silent drops. Each Session permits only
+one in-flight outbound connect, so establish its Links serially. Always use
+`getCapabilities()` and `link.maxMessageBytes`; oversized arguments reject with
+`INVALID_ARGUMENT` without truncation.
 
 ## Lifecycle and events
 

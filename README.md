@@ -85,8 +85,9 @@ native module adds no application ACK or message-fragment protocol.
 - One legacy advertising packet carries a fixed 128-bit Astrolink service UUID,
   version, dynamic SPSM, service name and up to **1 byte** of user data. Service
   names are not converted into UUIDs. Overlength input is rejected.
-- Device connection capacity is **1 Link**. The core uses a Link table and
-  independent queues, and host tests also run with two Links.
+- Device connection capacity is **16 Links**, shared across at most **4 Sessions**.
+  Host tests cover allocating, closing and reusing all 16 Link entries. Each
+  Session permits one in-flight outbound connect, so establish its Links serially.
 - One `send` is one complete CoC SDU, including empty SDUs. Sending is limited
   to the smaller of the remote receive MTU and **512 bytes**. Local receive
   MTU is independently configured as 512 bytes.
