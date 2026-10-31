@@ -10,7 +10,9 @@ use ::core::{
 };
 
 const SLOTS: usize = 4;
-const CHANNELS: usize = 8;
+// A Session can own every Link, so its channel table has to hold the whole
+// device capacity. SLOTS services x CHANNELS covers the worst-case split.
+const CHANNELS: usize = crate::core::DEVICE_MAX_LINKS;
 const RECEIVE_MTU: u16 = 512;
 const RECEIVE_MPS: u16 = 64;
 const INITIAL_CREDITS: u16 = 5;
