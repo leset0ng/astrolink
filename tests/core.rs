@@ -13,9 +13,9 @@ fn peer(index: u8) -> Peer {
     }
 }
 
-fn advertising(service: &str, data: &[u8], spsm: u8) -> Vec<u8> {
+fn advertising_of(uuid: [u8; SERVICE_UUID_BYTES], data: &[u8], spsm: u8) -> Vec<u8> {
     let advertisement = Advertisement {
-        service: ServiceId::new(service).unwrap(),
+        uuid,
         spsm,
         data: AdvertisingData::new(data).unwrap(),
     };
@@ -24,13 +24,27 @@ fn advertising(service: &str, data: &[u8], spsm: u8) -> Vec<u8> {
     bytes[..len].to_vec()
 }
 
+fn advertising(service: &str, data: &[u8], spsm: u8) -> Vec<u8> {
+    advertising_of(ServiceId::new(service).unwrap().uuid(), data, spsm)
+}
+
+fn hello_with(uuid: [u8; SERVICE_UUID_BYTES]) -> Vec<u8> {
+    let mut bytes = [0; MAX_HELLO_BYTES];
+    let len = encode_hello(uuid, &mut bytes);
+    bytes[..len].to_vec()
+}
+
+fn hello_of(service: &str) -> Vec<u8> {
+    hello_with(ServiceId::new(service).unwrap().uuid())
+}
+
 fn discover<const N: usize>(engine: &mut Engine<N>, session: SessionId, remote: Peer) {
     if engine.session(session).unwrap().scan == ResourceState::Idle {
         engine.begin_scan(session, false).unwrap();
         engine.scan_started(session, Ok(())).unwrap();
     }
-    let service = engine.session(session).unwrap().service.as_str().to_owned();
-    engine.advertisement(session, remote, -40, &advertising(&service, &[7], 0x80));
+    let uuid = engine.session(session).unwrap().uuid;
+    engine.advertisement(session, remote, -40, &advertising_of(uuid, &[7], 0x80));
     // Reconnecting to a cached peer may suppress a duplicate advertisement event.
     assert!(engine.session(session).unwrap().peer(remote).is_some());
 }
@@ -47,7 +61,7 @@ fn open<const N: usize>(
     engine.acl_connected(link).unwrap();
     engine.channel_opened(link, cid, 512).unwrap();
     let mut hello = [0; MAX_HELLO_BYTES];
-    let len = encode_hello(engine.session(session).unwrap().service, &mut hello);
+    let len = encode_hello(engine.session(session).unwrap().uuid, &mut hello);
     engine.receive(link, &hello[..len]).unwrap();
     engine.transmission_submitted(link, None).unwrap();
     assert_eq!(
@@ -76,34 +90,52 @@ fn saturated_pool() -> (Engine<16>, SessionId, [LinkId; 16]) {
 
 #[test]
 fn standard_advertisement_roundtrips_at_legacy_limit() {
-    let bytes = advertising("k7m2p9", &[0xab], 0xff);
+    let uuid = ServiceId::new("k7m2p9").unwrap().uuid();
+    let data = [1, 2, 3, 4, 5, 6, 7, 8];
+    let bytes = advertising("k7m2p9", &data, 0xff);
     assert_eq!(bytes.len(), 31);
     assert_eq!(&bytes[..5], &[2, 1, 2, 27, 0x21]);
-    let parsed = Advertisement::decode(&bytes).unwrap();
-    assert_eq!(parsed.service.as_str(), "k7m2p9");
-    assert_eq!(parsed.data.as_bytes(), &[0xab]);
+    let parsed = Advertisement::decode(&bytes, uuid).unwrap();
+    assert_eq!(parsed.uuid, uuid);
+    assert_eq!(parsed.data.as_bytes(), &data);
     assert_eq!(parsed.spsm, 0xff);
     for end in 1..bytes.len() {
-        assert!(Advertisement::decode(&bytes[..end]).is_none());
+        assert!(Advertisement::decode(&bytes[..end], uuid).is_none());
     }
+    // A peer with a different name is a different identity and is not parsed.
+    assert!(Advertisement::decode(&bytes, ServiceId::new("other").unwrap().uuid()).is_none());
 }
 
 #[test]
-fn advertisement_rejects_foreign_uuid_bad_version_psm_and_truncated_utf8() {
-    let valid = advertising("chat", &[0], 0x80);
-    for (offset, value) in [(5, 0), (21, 2), (22, 0x7f), (23, 7), (24, 0xff)] {
+fn advertisement_rejects_bad_version_psm_duplication_and_bounds() {
+    let uuid = ServiceId::new("chat").unwrap().uuid();
+    let valid = advertising("chat", &[0; MAX_ADVERTISING_DATA_BYTES], 0x80);
+    for (offset, value) in [(5, 0), (21, 1), (22, 0x7f)] {
         let mut bad = valid.clone();
         bad[offset] = value;
-        assert!(Advertisement::decode(&bad).is_none(), "offset {offset}");
+        assert!(Advertisement::decode(&bad, uuid).is_none(), "offset {offset}");
     }
     let mut duplicate = valid.clone();
     duplicate.extend_from_slice(&valid[3..]);
-    assert!(Advertisement::decode(&duplicate).is_none());
+    assert!(Advertisement::decode(&duplicate, uuid).is_none());
+
     assert_eq!(ServiceId::new(""), Err(Error::InvalidArgument));
-    assert_eq!(ServiceId::new("1234567"), Err(Error::InvalidArgument));
-    assert!(ServiceId::new("测试").is_ok());
-    assert_eq!(ServiceId::new("测试a"), Err(Error::InvalidArgument));
-    assert_eq!(AdvertisingData::new(&[0, 1]), Err(Error::InvalidArgument));
+    let longest = "a".repeat(MAX_SERVICE_ID_BYTES);
+    assert!(ServiceId::new(&longest).is_ok());
+    assert_eq!(
+        ServiceId::new(&"a".repeat(MAX_SERVICE_ID_BYTES + 1)),
+        Err(Error::InvalidArgument)
+    );
+    // The name is local, so multi-byte text is bounded by bytes, not characters.
+    assert!(ServiceId::new("中文服务名").is_ok());
+    assert_eq!(
+        AdvertisingData::new(&[0; MAX_ADVERTISING_DATA_BYTES + 1]),
+        Err(Error::InvalidArgument)
+    );
+
+    // Identity is deterministic and name-dependent.
+    assert_eq!(uuid, ServiceId::new("chat").unwrap().uuid());
+    assert_ne!(uuid, ServiceId::new("chat ").unwrap().uuid());
 }
 
 #[test]
@@ -196,11 +228,12 @@ fn both_hello_orders_complete_only_after_local_submission() {
         let (id, _) = engine.connect(session, peer(1), 0).unwrap();
         assert_eq!(engine.connect(session, peer(1), 5), Ok((id, false)));
         engine.channel_opened(id, 0x40, 512).unwrap();
+        let hello = hello_with(engine.session(session).unwrap().uuid);
         let tx = engine.next_transmission().unwrap();
-        assert_eq!(tx.message.as_bytes(), b"\x01\x04chat");
+        assert_eq!(tx.message.as_bytes(), &hello);
         assert!(tx.send.is_none());
         if remote_first {
-            engine.receive(id, b"\x01\x04chat").unwrap();
+            engine.receive(id, &hello).unwrap();
         } else {
             engine.transmission_submitted(id, None).unwrap();
         }
@@ -209,7 +242,7 @@ fn both_hello_orders_complete_only_after_local_submission() {
         if remote_first {
             engine.transmission_submitted(id, None).unwrap();
         } else {
-            engine.receive(id, b"\x01\x04chat").unwrap();
+            engine.receive(id, &hello).unwrap();
         }
         assert_eq!(engine.link(id).unwrap().state, LinkState::Connected);
         assert_eq!(
@@ -226,7 +259,8 @@ fn both_hello_orders_complete_only_after_local_submission() {
 
 #[test]
 fn mismatch_and_small_remote_mtu_close_the_channel() {
-    for (mtu, hello) in [(512, &b"\x01\x04nope"[..]), (5, &b""[..])] {
+    let mismatch = hello_of("nope");
+    for (mtu, hello) in [(512, &mismatch[..]), (5, &b""[..])] {
         let mut engine = Engine::<1>::new();
         let session = engine.create_session(1, "chat").unwrap();
         discover(&mut engine, session, peer(1));
@@ -282,7 +316,9 @@ fn local_receive_limit_is_independent_of_remote_receive_mtu() {
     discover(&mut engine, session, peer(1));
     let (id, _) = engine.connect(session, peer(1), 0).unwrap();
     engine.channel_opened(id, 0x40, 23).unwrap();
-    engine.receive(id, b"\x01\x04chat").unwrap();
+    engine
+        .receive(id, &hello_with(engine.session(session).unwrap().uuid))
+        .unwrap();
     engine.transmission_submitted(id, None).unwrap();
     assert_eq!(engine.link(id).unwrap().max_message_bytes, 23);
     assert_eq!(engine.send(id, &[0; 24]), Err(Error::InvalidArgument));
@@ -372,7 +408,9 @@ fn peer_can_send_before_local_hello_is_submitted() {
     discover(&mut engine, session, peer(1));
     let (id, _) = engine.connect(session, peer(1), 0).unwrap();
     engine.channel_opened(id, 0x40, 512).unwrap();
-    engine.receive(id, b"\x01\x04chat").unwrap();
+    engine
+        .receive(id, &hello_with(engine.session(session).unwrap().uuid))
+        .unwrap();
     engine.receive(id, b"first SDU").unwrap();
     assert!(engine.take_received(id).is_err());
     engine.transmission_submitted(id, None).unwrap();
@@ -451,7 +489,9 @@ fn stop_advertising_prevents_new_links_and_preserves_existing_link() {
     engine.advertising_started(session, Ok(())).unwrap();
     let id = engine.accept(session, peer(1), 0).unwrap();
     engine.channel_opened(id, 0x40, 512).unwrap();
-    engine.receive(id, b"\x01\x04chat").unwrap();
+    engine
+        .receive(id, &hello_with(engine.session(session).unwrap().uuid))
+        .unwrap();
     engine.transmission_submitted(id, None).unwrap();
     assert_eq!(
         engine.take_event(),
@@ -702,4 +742,23 @@ fn core_storage_is_bounded_for_device_and_multilink_configuration() {
     assert!(std::mem::size_of::<Engine<1>>() < 22 * 1024);
     assert!(std::mem::size_of::<Engine<2>>() < 22 * 1024);
     assert!(std::mem::size_of::<Engine<16>>() < 24 * 1024);
+}
+
+#[test]
+fn identity_derivation_is_a_frozen_vector() {
+    // Pinned so a later refactor cannot silently change every peer's identity.
+    assert_eq!(
+        ServiceId::new("chat").unwrap().uuid(),
+        [
+            0x69, 0x7f, 0x5b, 0x54, 0xac, 0x75, 0x72, 0x77, 0xb8, 0x06, 0xe9, 0x7b, 0x40, 0x61,
+            0x45, 0x53
+        ]
+    );
+    assert_eq!(
+        ServiceId::new("chat2").unwrap().uuid(),
+        [
+            0x4a, 0xf5, 0xc2, 0x75, 0x95, 0x83, 0xd9, 0x4f, 0x70, 0x81, 0x4a, 0xa8, 0x37, 0xb0,
+            0x5e, 0x5b
+        ]
+    );
 }

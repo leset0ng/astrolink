@@ -33,9 +33,9 @@ function fixture() {
     async close() { calls.push("close") }
   }
   const native = {
-    getCapabilities() { return { supported: true, maxLinks: 1, maxServiceIdBytes: 6, maxAdvertisingDataBytes: 1 } },
+    getCapabilities() { return { supported: true, maxLinks: 1, maxServiceIdBytes: 64, maxAdvertisingDataBytes: 8 } },
     createSession(options) {
-      if (!options.serviceId || Buffer.byteLength(options.serviceId) > 6) {
+      if (!options.serviceId || Buffer.byteLength(options.serviceId) > 64) {
         throw Object.assign(new Error("invalid UTF-8 byte length"), { code: "INVALID_ARGUMENT" })
       }
       if (options.serviceId === "chat") return session
@@ -195,9 +195,9 @@ test("UTF-8 service-name boundary uses native byte limits and closes its tempora
   assert.equal(utf8ByteLength("\ud800"), 3)
   const f = fixture()
   await f.controller.testServiceNames()
-  assert.deepEqual(f.calls[0], ["temporarySession", "中中"])
+  assert.deepEqual(f.calls[0], ["temporarySession", "中".repeat(21) + "a"])
   assert.equal(f.calls[1], "temporaryClose")
-  assert.match(f.controller.snapshot().result, /6 B 通过，7 B 已拒绝/)
+  assert.match(f.controller.snapshot().result, /64 B 通过，65 B 已拒绝/)
   assert.equal(f.controller.snapshot().ready, true)
   await f.controller.destroy()
 })

@@ -34,7 +34,7 @@ acceptance limits.
 
 Installable outputs:
 
-- Native module: `dist/astrolink-0.1.0.canopus` (version code 43).
+- Native module: `dist/astrolink-0.1.0.canopus` (version code 44).
 - npm package: `packages/astrolink/dist/canopus-astrolink-0.1.1.tgz`.
 - Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
   `astrolink-example-bytecode.rpk` in that directory.
@@ -84,10 +84,16 @@ native module adds no application ACK or message-fragment protocol.
 
 ## Contract and limits
 
-- `serviceId` is required and matches literal UTF-8 bytes, up to **6 bytes**.
-- One legacy advertising packet carries a fixed 128-bit Astrolink service UUID,
-  version, dynamic SPSM, service name and up to **1 byte** of user data. Service
-  names are not converted into UUIDs. Overlength input is rejected.
+- `serviceId` is required, up to **64 UTF-8 bytes**, and stays local: the air
+  carries only a 128-bit UUID derived from it (FNV-1a). Two Sessions on one
+  device may not share a derived identity; a byte-exact duplicate name returns
+  `BUSY`.
+- One legacy advertising packet carries Flags, the derived 128-bit service UUID,
+  frame version 2, the dynamic SPSM and up to **8 bytes** of user data. The
+  service name is never transmitted, so it does not consume air time. Overlength
+  input is rejected.
+- The link handshake exchanges `[version][uuid]` and closes the Link with
+  `INVALID_ARGUMENT` when the peer's identity differs.
 - Device connection capacity is **16 Links**, shared across at most **4 Sessions**.
   Host tests cover allocating, closing and reusing all 16 Link entries. Each
   Session permits one in-flight outbound connect, so establish its Links serially.

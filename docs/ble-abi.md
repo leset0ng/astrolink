@@ -194,10 +194,11 @@ its own `02 01 0A` flags. Consequently `protocol::Advertisement::encode` include
 its own flags. Backend submission accepts at most 31 bytes and uses no scan
 response, so application data is delivered from one complete advertisement.
 
-The frozen wire layout is Flags (3 bytes), Service Data AD with one constant
-private 128-bit UUID (18 bytes including AD length/type), v1/SPSM/service length
-(3 bytes), literal service bytes (at most 6), and user data (at most 1).
-It requires no invented manufacturer company identifier.
+The frozen wire layout (frame version 2) is Flags (3 bytes) followed by one
+Service Data AD (AD length/type plus 16 UUID bytes) carrying the derived
+identity UUID, then version/SPSM and up to 8 bytes of user data. The service
+name is never transmitted; see `docs/wire-format.md`. It requires no invented
+manufacturer company identifier and no assigned 16-bit UUID.
 
 ## Legacy LE CoC request and events
 

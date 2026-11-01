@@ -65,7 +65,7 @@ test("primitive ABI creates numeric sessions, validates UTF-8 and subscribes onc
   const f = setup()
   assert.equal(f.raw.sessions.get(11), "chat")
   assert.equal(f.raw.subscriptions, 1)
-  assert.throws(() => f.facade.createSession({ serviceId: "中文a" }), { code: "INVALID_ARGUMENT" })
+  assert.throws(() => f.facade.createSession({ serviceId: "a".repeat(65) }), { code: "INVALID_ARGUMENT" })
   const second = f.facade.createSession({ serviceId: "中文" })
   assert.equal(f.raw.sessions.get(12), "中文")
   const closing = second.close()
@@ -114,7 +114,7 @@ test("advertising sends exact binary view bytes and rejects oversize payloads be
   f.raw.complete()
   await stop
   const count = f.raw.requests.length
-  await assert.rejects(f.session.startAdvertising({ data: new Uint8Array(2) }), { code: "INVALID_ARGUMENT" })
+  await assert.rejects(f.session.startAdvertising({ data: new Uint8Array(9) }), { code: "INVALID_ARGUMENT" })
   assert.equal(f.raw.requests.length, count)
   await close(f)
 })

@@ -7,9 +7,9 @@ function primitive() {
   const requests = []
   const sessions = new Map()
   const feature = {
-    getCapabilities: () => ({ supported: true, maxLinks: 1, maxServiceIdBytes: 6, maxAdvertisingDataBytes: 1 }),
+    getCapabilities: () => ({ supported: true, maxLinks: 1, maxServiceIdBytes: 64, maxAdvertisingDataBytes: 8 }),
     createSession(serviceId) {
-      if (typeof serviceId !== "string" || !serviceId || Buffer.byteLength(serviceId) > 6) return -2
+      if (typeof serviceId !== "string" || !serviceId || Buffer.byteLength(serviceId) > 64) return -2
       const handle = ++nextSession
       sessions.set(handle, serviceId)
       return handle

@@ -133,7 +133,8 @@ pub struct PeerRecord {
 pub struct Session {
     pub id: SessionId,
     pub owner: u32,
-    pub service: ServiceId,
+    /// Advertised identity derived from the local service name.
+    pub uuid: [u8; protocol::SERVICE_UUID_BYTES],
     pub scan: ResourceState,
     pub advertising: ResourceState,
     pub allow_duplicates: bool,
@@ -239,7 +240,7 @@ pub struct Link {
     pub channel: Option<u16>,
     pub max_message_bytes: usize,
     pub close_reason: Error,
-    service: ServiceId,
+    uuid: [u8; protocol::SERVICE_UUID_BYTES],
     started_ms: u64,
     hello_sent: bool,
     hello_received: bool,
@@ -335,12 +336,13 @@ impl<const LINKS: usize> Engine<LINKS> {
     }
 
     pub fn create_session(&mut self, owner: u32, service: &str) -> Result<SessionId, Error> {
-        let service = ServiceId::new(service)?;
+        // The name stays local; only its derived identity is compared and aired.
+        let uuid = ServiceId::new(service)?.uuid();
         if self
             .sessions
             .iter()
             .flatten()
-            .any(|session| session.service == service)
+            .any(|session| session.uuid == uuid)
         {
             return Err(Error::Busy);
         }
@@ -353,7 +355,7 @@ impl<const LINKS: usize> Engine<LINKS> {
         self.sessions[slot] = Some(Session {
             id,
             owner,
-            service,
+            uuid,
             scan: ResourceState::Idle,
             advertising: ResourceState::Idle,
             allow_duplicates: false,
@@ -484,10 +486,8 @@ impl<const LINKS: usize> Engine<LINKS> {
         if session.scan != ResourceState::Active {
             return None;
         }
-        let advertisement = Advertisement::decode(bytes)?;
-        if advertisement.service != session.service {
-            return None;
-        }
+        // Foreign services are ignored inside the decoder; no name is on the air.
+        let advertisement = Advertisement::decode(bytes, session.uuid)?;
         let record = PeerRecord {
             peer,
             spsm: advertisement.spsm,
@@ -552,7 +552,7 @@ impl<const LINKS: usize> Engine<LINKS> {
         now_ms: u64,
     ) -> Result<LinkId, Error> {
         let owner = self.session(session)?.owner;
-        let service = self.session(session)?.service;
+        let uuid = self.session(session)?.uuid;
         let slot = self
             .links
             .iter()
@@ -575,7 +575,7 @@ impl<const LINKS: usize> Engine<LINKS> {
             channel: None,
             max_message_bytes: 0,
             close_reason: Error::Disconnected,
-            service,
+            uuid,
             started_ms: now_ms,
             hello_sent: false,
             hello_received: false,
@@ -623,7 +623,7 @@ impl<const LINKS: usize> Engine<LINKS> {
             return Err(Error::Disconnected);
         }
         link.channel = Some(channel);
-        if peer_receive_mtu < (2 + link.service.as_bytes().len()) as u16 {
+        if peer_receive_mtu < protocol::MAX_HELLO_BYTES as u16 {
             self.close_link(id, Error::InvalidArgument)?;
             return Err(Error::InvalidArgument);
         }
@@ -673,7 +673,7 @@ impl<const LINKS: usize> Engine<LINKS> {
             };
             if link.state == LinkState::CheckingService && !link.hello_sent {
                 let mut bytes = [0; protocol::MAX_HELLO_BYTES];
-                let len = protocol::encode_hello(link.service, &mut bytes);
+                let len = protocol::encode_hello(link.uuid, &mut bytes);
                 return Some(Transmission {
                     link: link.id,
                     channel,
@@ -731,7 +731,7 @@ impl<const LINKS: usize> Engine<LINKS> {
         let link = self.link_mut(id)?;
         match link.state {
             LinkState::CheckingService if !link.hello_received => {
-                if let Err(error) = protocol::validate_hello(link.service, bytes) {
+                if let Err(error) = protocol::validate_hello(link.uuid, bytes) {
                     self.close_link(id, error)?;
                     return Err(error);
                 }

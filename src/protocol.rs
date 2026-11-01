@@ -1,19 +1,40 @@
 //! Wire formats carried by standard BLE advertisements and LE CoC SDUs.
 //!
-//! The service UUID identifies Astrolink's format; service names remain literal
-//! UTF-8 strings, and are never interpreted as Bluetooth UUIDs.
+//! Session identity is a 128-bit UUID derived from the application service name,
+//! so the name itself never travels in the advertising packet. The name remains
+//! a local label; only its UUID reaches the air, leaving the payload for
+//! application data.
 
 use crate::core::Error;
 
-pub const VERSION: u8 = 1;
-pub const MAX_SERVICE_ID_BYTES: usize = 6;
-pub const MAX_ADVERTISING_DATA_BYTES: usize = 1;
+/// Frame version. Version 1 carried literal service names and is rejected.
+pub const VERSION: u8 = 2;
+/// Longest accepted local service name. The name is not transmitted, so this is
+/// only a sanity bound for the string an application passes to `createSession`.
+pub const MAX_SERVICE_ID_BYTES: usize = 64;
+/// Application data carried in one legacy advertisement beside the identity.
+pub const MAX_ADVERTISING_DATA_BYTES: usize = 8;
+pub const SERVICE_UUID_BYTES: usize = 16;
 pub const LEGACY_ADVERTISING_BYTES: usize = 31;
-/// Private 128-bit service UUID 9c43e0a1-f2d8-4b5c-8e67-1a623fb094d5,
-/// encoded least-significant octet first as required by the GAP data format.
-pub const SERVICE_UUID: [u8; 16] = [
-    0xd5, 0x94, 0xb0, 0x3f, 0x62, 0x1a, 0x67, 0x8e, 0x5c, 0x4b, 0xd8, 0xf2, 0xa1, 0xe0, 0x43, 0x9c,
-];
+/// Flags AD the firmware wrappers do not insert themselves.
+const FLAGS_AD: [u8; 3] = [2, 0x01, 0x02];
+/// Service Data AD type for a 128-bit UUID.
+const SERVICE_DATA_AD_TYPE: u8 = 0x21;
+/// Smallest Service Data AD the decoder accepts: type, UUID, version, SPSM.
+const SERVICE_DATA_MIN: usize = 1 + SERVICE_UUID_BYTES + 2;
+
+/// FNV-1a over the UTF-8 name yields the advertised identity. Deterministic on
+/// both peers, no registry and no wire copy of the name.
+pub fn derive_uuid(bytes: &[u8]) -> [u8; SERVICE_UUID_BYTES] {
+    const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u128::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash.to_be_bytes()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServiceId {
@@ -41,6 +62,10 @@ impl ServiceId {
     pub fn as_str(&self) -> &str {
         // Constructed only from valid UTF-8 and immutable thereafter.
         unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+    }
+
+    pub fn uuid(self) -> [u8; SERVICE_UUID_BYTES] {
+        derive_uuid(self.as_bytes())
     }
 }
 
@@ -73,7 +98,7 @@ impl AdvertisingData {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Advertisement {
-    pub service: ServiceId,
+    pub uuid: [u8; SERVICE_UUID_BYTES],
     pub spsm: u8,
     pub data: AdvertisingData,
 }
@@ -83,75 +108,76 @@ impl Advertisement {
         if !(0x80..=0xff).contains(&self.spsm) {
             return Err(Error::InvalidArgument);
         }
-        let service = self.service.as_bytes();
         let data = self.data.as_bytes();
-        // LE General Discoverable. The host also supports BR/EDR.
-        output[..3].copy_from_slice(&[2, 0x01, 0x02]);
-        let end = 24 + service.len() + data.len();
-        output[3] = (end - 4) as u8;
-        output[4] = 0x21; // Service Data - 128-bit UUID.
-        output[5..21].copy_from_slice(&SERVICE_UUID);
-        output[21] = VERSION;
-        output[22] = self.spsm;
-        output[23] = service.len() as u8;
-        output[24..24 + service.len()].copy_from_slice(service);
-        output[24 + service.len()..end].copy_from_slice(data);
-        Ok(end)
+        // Content after the AD length byte: type, UUID, version, SPSM, data.
+        let ad = 1 + SERVICE_UUID_BYTES + 2 + data.len();
+        let end = FLAGS_AD.len() + 1 + ad;
+        if end > LEGACY_ADVERTISING_BYTES {
+            return Err(Error::InvalidArgument);
+        }
+        output[..FLAGS_AD.len()].copy_from_slice(&FLAGS_AD);
+        output[FLAGS_AD.len()] = ad as u8;
+        let mut cursor = FLAGS_AD.len() + 1;
+        output[cursor] = SERVICE_DATA_AD_TYPE;
+        cursor += 1;
+        output[cursor..cursor + SERVICE_UUID_BYTES].copy_from_slice(&self.uuid);
+        cursor += SERVICE_UUID_BYTES;
+        output[cursor] = VERSION;
+        cursor += 1;
+        output[cursor] = self.spsm;
+        cursor += 1;
+        output[cursor..cursor + data.len()].copy_from_slice(data);
+        cursor += data.len();
+        debug_assert_eq!(cursor, end);
+        Ok(cursor)
     }
 
-    /// Parse complete AD structures. A truncated report is never delivered.
-    pub fn decode(mut input: &[u8]) -> Option<Self> {
+    /// Parses only the Service Data AD carrying `uuid`; other services are
+    /// ignored. A truncated or duplicated matching AD rejects the report.
+    pub fn decode(input: &[u8], uuid: [u8; SERVICE_UUID_BYTES]) -> Option<Self> {
+        let mut remaining = input;
         let mut found = None;
-        while !input.is_empty() {
-            let len = input[0] as usize;
+        while !remaining.is_empty() {
+            let len = remaining[0] as usize;
             if len == 0 {
                 break;
             }
-            if len >= input.len() {
+            if len >= remaining.len() {
                 return None;
             }
-            let ad = &input[1..=len];
-            input = &input[len + 1..];
-            if ad[0] != 0x21 || ad.len() < 20 || ad[1..17] != SERVICE_UUID {
+            let ad = &remaining[1..=len];
+            remaining = &remaining[len + 1..];
+            if ad[0] != SERVICE_DATA_AD_TYPE
+                || ad.len() < SERVICE_DATA_MIN
+                || ad[1..1 + SERVICE_UUID_BYTES] != uuid
+            {
                 continue;
             }
-            if found.is_some() || ad[17] != VERSION || ad[18] < 0x80 {
+            if found.is_some() || ad[1 + SERVICE_UUID_BYTES] != VERSION {
                 return None;
             }
-            let service_len = ad[19] as usize;
-            if service_len == 0 || service_len > MAX_SERVICE_ID_BYTES || 20 + service_len > ad.len()
-            {
+            let spsm = ad[2 + SERVICE_UUID_BYTES];
+            if spsm < 0x80 {
                 return None;
             }
-            let service =
-                ServiceId::new(core::str::from_utf8(&ad[20..20 + service_len]).ok()?).ok()?;
-            let data = AdvertisingData::new(&ad[20 + service_len..]).ok()?;
-            found = Some(Self {
-                service,
-                spsm: ad[18],
-                data,
-            });
+            let data = AdvertisingData::new(&ad[3 + SERVICE_UUID_BYTES..]).ok()?;
+            found = Some(Self { uuid, spsm, data });
         }
         found
     }
 }
 
-pub const MAX_HELLO_BYTES: usize = 2 + MAX_SERVICE_ID_BYTES;
+/// Version plus the identity UUID. The name stays local, so this is fixed size.
+pub const MAX_HELLO_BYTES: usize = 1 + SERVICE_UUID_BYTES;
 
-pub fn encode_hello(service: ServiceId, output: &mut [u8; MAX_HELLO_BYTES]) -> usize {
-    let bytes = service.as_bytes();
+pub fn encode_hello(uuid: [u8; SERVICE_UUID_BYTES], output: &mut [u8; MAX_HELLO_BYTES]) -> usize {
     output[0] = VERSION;
-    output[1] = bytes.len() as u8;
-    output[2..2 + bytes.len()].copy_from_slice(bytes);
-    2 + bytes.len()
+    output[1..].copy_from_slice(&uuid);
+    MAX_HELLO_BYTES
 }
 
-pub fn validate_hello(service: ServiceId, input: &[u8]) -> Result<(), Error> {
-    if input.len() != service.as_bytes().len() + 2
-        || input[0] != VERSION
-        || input[1] as usize != service.as_bytes().len()
-        || &input[2..] != service.as_bytes()
-    {
+pub fn validate_hello(uuid: [u8; SERVICE_UUID_BYTES], input: &[u8]) -> Result<(), Error> {
+    if input.len() != MAX_HELLO_BYTES || input[0] != VERSION || input[1..] != uuid {
         return Err(Error::InvalidArgument);
     }
     Ok(())

@@ -1095,7 +1095,7 @@ fn next_work(runtime: &mut Runtime) -> Work {
                     continue;
                 }
                 let advertisement = Advertisement {
-                    service: session.service,
+                    uuid: session.uuid,
                     spsm: slot.spsm,
                     data: slot.data,
                 };
@@ -1442,6 +1442,12 @@ pub unsafe fn rollback_before_feature() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hello_of(service: &str) -> Vec<u8> {
+        let mut bytes = [0; MAX_HELLO_BYTES];
+        let len = encode_hello(ServiceId::new(service).unwrap().uuid(), &mut bytes);
+        bytes[..len].to_vec()
+    }
 
     fn session(runtime: &mut Runtime, owner: u32, name: &str) -> SessionId {
         let id = runtime.engine.create_session(owner, name).unwrap();
@@ -1911,7 +1917,7 @@ mod tests {
             address_type: 0,
         };
         let advertisement = Advertisement {
-            service: ServiceId::new("chat").unwrap(),
+            uuid: ServiceId::new("chat").unwrap().uuid(),
             spsm: 0x80,
             data: AdvertisingData::EMPTY,
         };
@@ -1923,7 +1929,7 @@ mod tests {
             .unwrap();
         let (link, _) = runtime.engine.connect(id, peer, 0).unwrap();
         runtime.engine.channel_opened(link, 0x40, 512).unwrap();
-        runtime.engine.receive(link, b"\x01\x04chat").unwrap();
+        runtime.engine.receive(link, &hello_of("chat")).unwrap();
         runtime.engine.transmission_submitted(link, None).unwrap();
         runtime.collect_core_events();
         runtime.engine.receive(link, &[0, 128, 255]).unwrap();

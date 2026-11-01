@@ -55,18 +55,19 @@ export class NativeProbeRunner {
         this.view.capabilities = `${capabilities.maxLinks} Link · 服务名 ${capabilities.maxServiceIdBytes} B · 广播 ${capabilities.maxAdvertisingDataBytes} B`
         return capabilities
       })
-      if (caps.maxServiceIdBytes !== 6) throw new Error("本探针对应服务名上限 6 B 的模块")
-      const utf8 = await this.step("接受 6 字节服务名", () => this.track(astrolink!.createSession({ serviceId: "测试" })))
+      if (caps.maxServiceIdBytes < 1) throw new Error("本探针要求服务名上限至少 1 B")
+      const boundary = "a".repeat(caps.maxServiceIdBytes)
+      const utf8 = await this.step(`接受 ${caps.maxServiceIdBytes} 字节服务名`, () => this.track(astrolink!.createSession({ serviceId: boundary })))
       await this.step("关闭边界测试 Session", () => this.close(utf8))
-      await this.step("拒绝 7 字节服务名", () => {
+      await this.step(`拒绝 ${caps.maxServiceIdBytes + 1} 字节服务名`, () => {
         let accidental: Session | undefined
-        try { accidental = astrolink!.createSession({ serviceId: "测试a" }) }
+        try { accidental = astrolink!.createSession({ serviceId: boundary + "a" }) }
         catch (error) {
           if ((error as { code?: string })?.code === "INVALID_ARGUMENT") return
           throw error
         }
         this.track(accidental)
-        throw new Error("7 B 服务名未被拒绝")
+        throw new Error(`${caps.maxServiceIdBytes + 1} B 服务名未被拒绝`)
       })
 
       let session = await this.step("创建 chat Session", () => this.track(astrolink!.createSession({ serviceId: "chat" })))
