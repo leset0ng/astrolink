@@ -21,7 +21,7 @@ cannot be silently added or dropped.
 | `xiaomi-band-11-4.100.179` | 4.100.179 (Q66) | adapted, probed 18/18 | Ported with `tools/fw-match`; `docs/target-179-recovery.md` |
 | `xiaomi-band-10-pro-3.101.043` | 3.101.043 (P67) | adapted, emulator probe 18/18 and both CoC roles | v42; real LE/HELLO, 0/1/511/512-byte SDUs, byte-verified replies and cleanup; `docs/p67-runtime-validation.md` |
 | `xiaomi-band-10-pro-3.101.036` | 3.101.036 (P67) | adapted, independent emulator probe 18/18 | v42; exact-image L2 backend, CLI install/activation and native lifecycle passed; CoC peer run pending |
-| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | static recovery; not runtime-enabled | Legacy lifecycle/QJS recovered; GAP/CoC and isolated validation incomplete; `SUPPORTED = false` |
+| `redmi-watch-6-3.100.043` | 3.100.043 (P65) | startup virtual-call fault fixed; native-interface load fails | v46 reaches BOOT_RESIDENT/error0; slot27 runtime regression passes; probe reaches JS but fails with null primitive, 0/18; `SUPPORTED = false`; `docs/p65-v46-runtime-validation.md` |
 | `xiaomi-band-9-3.1.32` | 3.1.32 (N66) | isolated lifecycle probe 18/18; CoC validation pending | Legacy extension, scan/advertising and Session teardown pass; bidirectional LE CoC acceptance is not yet claimed; `docs/legacy-import-contract.md` |
 | `xiaomi-band-9-pro-3.1.190` | 3.1.190 (N67) | not adapted; evidence pending | Its own extracted payload is not an independently analyzed AP. The old sibling-based `feature_runtime_absent` verdict is not retained as evidence of absence |
 | `xiaomi-band-10-3.1.28` | 3.1.28 (O66) | static recovery; validation stopped by request | ABI evidence retained; no installation or runtime validation; `SUPPORTED = false` |

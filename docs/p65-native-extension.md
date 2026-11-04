@@ -51,8 +51,8 @@ The stock JS BLE advertising wrapper `0x0C9CEBA0` builds a 28-byte parameter
 block and obtains the adapter via `0x0CA3F474`. It reaches generic producer
 `0x1C00A908(adapter, params, data, len, response, response_len, callbacks)`,
 which copies the configuration/payloads and issues command **67**. The service
-reply path `0x0C059990` installs a 12-byte callback table and queues
-`0x0C05979C`; stop `0x0C059A88` releases the matching advertising set. The
+reply path `0x1C059990` installs a 12-byte callback table and queues
+`0x1C05979C`; stop `0x1C059A88` releases the matching advertising set. The
 parameter byte meanings and handle lifetime still need verification.
 
 The generic scan paths are:
@@ -142,10 +142,78 @@ the runtime support gate:
 entry signatures and the checked empty-SDU implementation. The retained-file
 protocol is deliberately different from N66's borrowed 24-byte slots.
 
-The remaining blockers are narrower but still substantive: the 28-byte
-advertising enum/connectable combination, filter+14/+15 semantics, and the
-custom GAP loop's owner/group lifetime. A custom loop is not necessarily the
-TLS default loop, and a retained file does not pin a foreign group's file
-rows. Therefore `SUPPORTED` remains false and no installation, lifecycle,
-HELLO or SDU runtime claim is made. Full reports are preserved at
-`/tmp/watch6-gap-coc-static.md` and `/tmp/watch6-libuv-static.md`.
+The remaining GAP and loop questions were resolved by the exact-image
+integration audit below. Full earlier reports were preserved at
+`/tmp/watch6-gap-coc-static.md` and `/tmp/watch6-libuv-static.md`; the new
+self-contained reports are retained in this repository.
+
+## Integration recovery update
+
+The exact-image producer/consumer reports are now retained as:
+
+- `docs/evidence/p65-gap-contract.md`: advertising enum, scan filtering,
+  callbacks, adapter state and client-wrapper lifetimes.
+- `docs/evidence/p65-loop-ownership.md`: default-loop identity, file-table
+  lifetime, retained files and owner-task capture.
+- `docs/evidence/p65-coc-events.md`: CoC event payloads, allocation ownership
+  and empty-SDU metadata.
+
+Advertising public mode5 is independently traced to properties0xD3 and legacy
+HCI ADV_IND type0. The existing interval320/power0xF6 block is correct.
+Filter16 is a UUID16 service-data filter with its enable byte at+12; tail
+bytes+14/+15 are unused in the audited manager path. Astrolink keeps command212
+and filters its UUID128 identity in the module. The native scanner has only two
+registrations, shared with stock firmware consumers; four module Sessions do
+not imply four simultaneous native scans.
+
+The global GAP client's business loop is the MiWear task's TLS default loop:
+`0x0C92CE28 -> 0x0C62B4EC -> 0x3C479C68 -> 0x0CA3F3D8 -> 0x1C001C10 -> client+52`.
+It is distinct from the client's response loop at+48. P65 has no filelist mutex
+at the N66 offset. Retained file-slot references survive ordinary close but do
+not keep a foreign group's rows alive during final group teardown.
+
+P65 therefore prepares its GAP wake endpoint only after an actual GAP request,
+through the existing Supervisor UI-post service. The callback requires the
+current task's TLS default loop to equal client+52, then retains both pipe
+endpoints, validates flags/shared inode/pipe operations, duplicates the writer
+into independent storage and releases both slot references. Deferred operations
+wait for this asynchronous preparation. A mismatched owner fails rather than
+using that task's unrelated numeric descriptors. QuickApp notification pipes
+also use the verified current-owner pair capture. No sleeping duplication runs
+inside a scheduler walk, and no foreign file-table pointer escapes one.
+On P65 duplication failure, clear the partially written destination without
+closing it: the native error path has already dropped its added inode reference.
+A later attempt therefore starts from zeroed, unowned storage.
+
+Advertising failed-start callbacks now reclaim the terminal 12-byte client
+wrapper after forwarding the result. Exact thunks `0x1C166660` and `0x1C168AF0`
+use the same `F_ALLOC`/`F_FREE` heap. Resource failures never link an advertiser;
+timeout status2 unlinks it before calling started. Native stopped delivery
+requires a live list entry, so failed-start cleanup cannot race a subsequent
+native stopped free through these paths. Successful-start and stopped ownership
+remain native.
+
+The shared backend now handles P65 OPEN3, DATA7, LOCAL_FLOW8 and CREDITS17;
+its old P65 exclusions and duplicate receive arm are removed. OPEN uses CID+108
+and remote receive MTU+72. CREDITS uses CID+0/added+2 after native accounting and
+queue drain. LOCAL_FLOW is ignored and freed, never treated as send completion.
+All callback payloads use the measured allocation/free family. Empty SDUs retain
+the existing explicit two-byte-zero fragment, with metadata1 as measured in the
+stock fragment producer; nonempty original SDUs keep metadata3.
+
+The new current-task global is recorded with static evidence in
+`EVID-ASTROLINK-P65-INTEGRATION-004` in the P65 target pack and generated bindings.
+It remains restricted/PENDING. The isolated v45 experiment passed real
+installation and activation (version45/state13/error0), but probe startup hit
+INVSTATE. Independent fault capture proved that the copied Application vtable
+was missing primary slot27: the 29-word copy included two prefix words and
+only slots0..26, while firmware 0x0C9FD416 reads vptr+0x6C before a possible
+BLX R3 at 0x0C9FD558. The saved target and PC were zero.
+
+The P65 copy is now 30 words, retaining slot27. The fresh v46 runtime regression
+reads the original 0x0C9FC601 from the copied table and reaches JavaScript without
+the original startup fault. Its native-interface loading still fails with
+`cannot read property 'subscribe' of null`, before any lifecycle checks. No GAP,
+lifecycle or CoC acceptance is claimed. `SUPPORTED` remains false. See
+`docs/p65-v46-runtime-validation.md` for the correction and runtime evidence;
+`docs/p65-runtime-validation.md` preserves the v45 failure and transport setup.

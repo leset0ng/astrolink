@@ -22,11 +22,14 @@ static CLIENT: AtomicUsize = AtomicUsize::new(0);
 static CLIENT_STARTING: AtomicUsize = AtomicUsize::new(0);
 static ADAPTER_REGISTERED: AtomicUsize = AtomicUsize::new(0);
 struct GapPipe(UnsafeCell<crate::loop_dispatch::PipeWake>);
-// Initialization is serialized by CLIENT_STARTING; sends hold loop+76.
+// Initialization is serialized by CLIENT_STARTING; sends hold the loop mutex.
 unsafe impl Sync for GapPipe {}
 static GAP_PIPE: GapPipe = GapPipe(UnsafeCell::new(crate::loop_dispatch::PipeWake::EMPTY));
 static NEXT_REQUEST: AtomicU32 = AtomicU32::new(1);
-#[cfg(feature = "target-xiaomi-band-9-3-1-32")]
+#[cfg(any(
+    feature = "target-xiaomi-band-9-3-1-32",
+    feature = "target-redmi-watch-6-3-100-043"
+))]
 static GAP_WAKE_STATE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
@@ -288,6 +291,42 @@ pub(crate) unsafe fn prepare_gap_wake() {
     GAP_WAKE_STATE.store(if result == Ok(()) { 1 } else { 2 }, Ordering::Release);
 }
 
+/// Capture P65's GAP pipe on its actual MiWear owner, reached through UI post.
+/// No foreign file-table slot survives the callback's executing task group.
+#[cfg(feature = "target-redmi-watch-6-3-100-043")]
+unsafe extern "C" fn prepare_gap_wake_ui(
+    _: *const canopus_abi::ContextV1,
+    _: *mut ::core::ffi::c_void,
+) {
+    crate::activation_detail(400);
+    let client = pointer(abi::D_ADAPTER_INSTANCE);
+    let business_loop = if client == 0 {
+        0
+    } else {
+        pointer(client + abi::ADAPTER_LOOP)
+    };
+    let result = if business_loop == 0 || abi::current_default_loop() != business_loop {
+        Err(-9)
+    } else {
+        (*GAP_PIPE.0.get()).capture_current(business_loop)
+    };
+    match result {
+        Ok(()) => {
+            GAP_WAKE_STATE.store(1, Ordering::Release);
+            crate::activation_detail(401);
+            CLIENT_STARTING.store(0, Ordering::Release);
+            let _ = ensure_client();
+        }
+        Err(error) => {
+            crate::activation_detail(4000 - error);
+            CLIENT_STARTING.store(0, Ordering::Release);
+            emit(Event::ClientFailed {
+                error: Error::Backend(error),
+            });
+        }
+    }
+}
+
 pub fn client_ready() -> bool {
     CLIENT.load(Ordering::Acquire) != 0
 }
@@ -303,6 +342,16 @@ pub fn ensure_client() -> Result<(), Error> {
     if CLIENT_STARTING.swap(1, Ordering::AcqRel) != 0 {
         // The first caller publishes either ClientReady or ClientFailed. All
         // deferred sessions are woken by that outcome; none waits silently.
+        return Ok(());
+    }
+    #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+    if GAP_WAKE_STATE.load(Ordering::Acquire) != 1 {
+        // Keep deferred requests pending until the owner-task capture finishes.
+        if let Err(error) = crate::runtime::post_ui(prepare_gap_wake_ui) {
+            CLIENT_STARTING.store(0, Ordering::Release);
+            emit(Event::ClientFailed { error });
+            return Err(error);
+        }
         return Ok(());
     }
     let result = (|| {
@@ -339,7 +388,10 @@ pub fn ensure_client() -> Result<(), Error> {
                 return Err(Error::NotReady);
             }
         }
-        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+        #[cfg(not(any(
+            feature = "target-xiaomi-band-9-3-1-32",
+            feature = "target-redmi-watch-6-3-100-043"
+        )))]
         unsafe {
             (*GAP_PIPE.0.get())
                 .capture_default_loop(business_loop)
@@ -786,6 +838,12 @@ macro_rules! callbacks {
         extern "C" fn $adv_start(h: usize, _: u8, s: u8) {
             let _guard = CallbackGuard::enter($i);
             adv_started($i, h, s);
+            #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+            if s != 0 {
+                // Event254 leaves the terminal P65 client wrapper to us.
+                // Failed advertisers cannot later deliver a stopped callback.
+                unsafe { free(h as *mut u8) };
+            }
         }
         extern "C" fn $adv_stop(h: usize, _advertising_id: u8) {
             let _guard = CallbackGuard::enter($i);
@@ -1682,7 +1740,6 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
             // its live channel intact until the owner handler returns;
             // perform(Connect) handles a concurrent close immediately then.
         }
-        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_OPEN => {
             let cid = word(p, abi::COC_EV_COMPLETE_CID);
             if let Some(channel) = (*state.owner.get())
@@ -1721,7 +1778,6 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
-        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_DATA | abi::COC_EVENT_CREDITS => {
             let cid = word(
                 p,
@@ -1769,48 +1825,11 @@ unsafe fn coc_event(index: usize, event: u32, p: *mut u8) {
                 }
             }
         }
-        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         abi::COC_EVENT_LOCAL_FLOW => {
-            // C86DA74 emits a separately allocated six-byte local flow report.
+            // Firmware emits a separately allocated six-byte local flow report.
             // Legacy LE submission is governed by event17 credits; this event
             // changes neither connection state nor responsibility for an SDU.
         }
-        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
-        abi::COC_EVENT_DATA => {
-            let cid = word(p, abi::COC_EV_DATA_CID);
-            if let Some(channel) = (*state.owner.get())
-                .channels
-                .iter()
-                .find(|c| c.cid == cid)
-                .copied()
-            {
-                if let Some(link) = channel.link {
-                    let end = word(p, abi::COC_EV_DATA_END);
-                    let offset = word(p, abi::COC_EV_DATA_OFFSET);
-                    if end < offset || end - offset > RECEIVE_MTU {
-                        emit(Event::Failed {
-                            session: session(index),
-                            link: Some(link),
-                            operation: 0,
-                            error: Error::ReceiveOverflow,
-                        });
-                        let _ = disconnect_cid(owner, cid);
-                    } else {
-                        emit(Event::Data {
-                            link,
-                            cid,
-                            data: ::core::slice::from_raw_parts(
-                                p.add(abi::COC_EV_DATA_BASE + offset as usize),
-                                (end - offset) as usize,
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
-        _ => {}
-        #[cfg(not(feature = "target-redmi-watch-6-3-100-043"))]
         _ => { /* no event4/5 producer exists in this legacy LE channel path */ }
     }
     if event == abi::COC_EVENT_CREDITS {

@@ -1,6 +1,6 @@
 //! Redmi Watch 6, exact firmware 3.100.043 (P65).
-//! Legacy native-extension integration. Static recovery is incomplete: zero
-//! entries below are deliberately unresolved and SUPPORTED stays false.
+//! Legacy native-extension integration. GAP/CoC and owner-task plumbing are
+//! statically recovered; runtime acceptance remains gated by SUPPORTED.
 
 pub const SUPPORTED: bool = false;
 pub const TARGET_ID: &str = "redmi-watch-6-3.100.043";
@@ -53,6 +53,8 @@ pub const F_FILE_WRITE: usize = 0x1c159a90;
 
 pub const F_FILE_CLOSE: usize = 0x1c1562e4;
 pub const F_NXSCHED_FOREACH: usize = 0x0c4c6078;
+/// Current TCB global, read only to verify owner-task TLS identity.
+pub const CURRENT_TASK: usize = fw::canopus_fw_nuttx_current_task;
 /// libuv loop key used by the QuickJS task's `uv_loop_t` slot vector.
 pub const D_UV_KEY: usize = 0x3c44c388;
 
@@ -254,7 +256,9 @@ pub const VTABLE_PREFIX_WORDS: usize = 2;
 pub const FRAMEWORK_FACTORY_SLOT: usize = 0;
 pub const FRAMEWORK_COPY_WORDS: usize = 9;
 pub const APPLICATION_INIT_SLOT: usize = 2;
-pub const APPLICATION_COPY_WORDS: usize = 29;
+// Firmware startup calls primary slot27 at vptr+0x6c (0x0c9fd416).
+// Retain both prefix words and all 28 primary entries when replacing the vptr.
+pub const APPLICATION_COPY_WORDS: usize = 30;
 
 pub const FRAMEWORK_IMPLEMENTATION: usize = 4;
 pub const FRAMEWORK_MUTEX: usize = 392;
@@ -273,7 +277,7 @@ pub const ARRAY_BUFFER_DETACHED: usize = 4;
 
 pub const FEATURE_ASYNC_WORDS: usize = 32;
 
-/// Calls the measured p67 engine entry. See docs/p67-native-contract.md.
+/// Calls the measured P65 engine entry. See docs/p65-native-extension.md.
 ///
 /// # Safety
 /// Context and values must belong to the live owning JavaScript task.
@@ -287,7 +291,7 @@ pub unsafe fn qjs_new_string_len(
     call(context, bytes, length)
 }
 
-/// Calls the measured p67 engine entry. See docs/p67-native-contract.md.
+/// Calls the measured P65 engine entry. See docs/p65-native-extension.md.
 ///
 /// # Safety
 /// Context and values must belong to the live owning JavaScript task.
@@ -301,7 +305,7 @@ pub unsafe fn qjs_new_array_buffer_copy(
     call(context, data, length)
 }
 
-/// Calls the measured p67 engine entry. See docs/p67-native-contract.md.
+/// Calls the measured P65 engine entry. See docs/p65-native-extension.md.
 ///
 /// # Safety
 /// Context and values must belong to the live owning JavaScript task.
@@ -315,7 +319,7 @@ pub unsafe fn qjs_get_array_buffer(
     call(context, length, value)
 }
 
-/// Calls the measured p67 engine entry. See docs/p67-native-contract.md.
+/// Calls the measured P65 engine entry. See docs/p65-native-extension.md.
 ///
 /// # Safety
 /// Context and values must belong to the live owning JavaScript task.
@@ -344,11 +348,6 @@ pub unsafe fn write_byte(file: *mut core::ffi::c_void, byte: u8) -> isize {
     call(file, &byte, 1)
 }
 
-/// Execute the state-dependent policy of the stock disconnect handler 0xC802F18.
-/// No request allocation is needed because the module already runs on Bluelet.
-///
-/// # Safety
-/// `channel` must be live and this call must run on the Bluelet owner task.
 /// Execute the P65 stock disconnect/reject policy on the Bluelet owner task.
 ///
 /// # Safety
@@ -373,7 +372,7 @@ pub unsafe fn disconnect_channel(channel: usize, _policy: u16) {
     }
 }
 
-/// Stock SDU/fragment submission; the ordinary p67 sender retains this exact layout.
+/// Stock SDU/fragment submission using the measured P65 buffer layout.
 ///
 /// # Safety
 /// Call on Bluelet with a live channel and a readable payload.
@@ -407,6 +406,8 @@ pub unsafe fn queue_send(
     }
     // The stock sender drops empty SDUs. Preserve its two-byte zero prefix
     // with an explicit first+last fragment and the ordinary credit queue.
+    // Stock fragments override the original SDU's metadata3 with priority1.
+    *buffer.add(SDU_BUFFER_META) = 1;
     core::ptr::write_unaligned(buffer.add(20).cast::<u16>(), 0);
     let queue = core::ptr::read_unaligned((channel + COC_CHANNEL_QUEUE) as *const usize);
     if queue == 0 {
@@ -485,11 +486,6 @@ pub const LEGACY_EFFECT_MANAGER_APPLICATION: usize = 108;
 pub const F_QJS_ADD_MODULE_EXPORT: usize = fw::CANOPUS_FW_QJS_ADD_MODULE_EXPORT_CALLABLE;
 pub const F_QJS_SET_MODULE_EXPORT: usize = fw::CANOPUS_FW_QJS_SET_MODULE_EXPORT_CALLABLE;
 
-/// Application association is not yet proven during extension initialization.
-/// Returning zero makes the shared host skip vptr mutation rather than guess.
-///
-/// # Safety
-/// `runtime` must be a live legacy runtime on its owning JavaScript task.
 /// Find the Application through the context-local NativeProxy effect manager.
 /// P65 initialization stores the framework's current Application at
 /// `AppEffectManager + 108`; this does not depend on Application.runtime,
@@ -592,7 +588,35 @@ pub unsafe fn legacy_publish(context: *mut core::ffi::c_void, value: u64) -> i32
     result
 }
 
-/// Create the eight-byte native scan wrapper with stock passive settings.
+/// Read the current task's existing TLS default loop without allocating it.
+/// Exact chain: TCB+68 -> TLS[0] -> taskinfo+20+4*key -> uvstate+768.
+///
+/// # Safety
+/// Call on the current task before capturing its own descriptor table.
+pub unsafe fn current_default_loop() -> usize {
+    let key = core::ptr::read_volatile(D_UV_KEY as *const u32);
+    let current = core::ptr::read_volatile(CURRENT_TASK as *const usize);
+    if key > UV_KEY_LIMIT || current == 0 {
+        return 0;
+    }
+    let tls = core::ptr::read_unaligned((current + TCB_TLS) as *const usize);
+    if tls == 0 {
+        return 0;
+    }
+    let taskinfo = core::ptr::read_unaligned(tls as *const usize);
+    if taskinfo == 0 {
+        return 0;
+    }
+    let uvstate = core::ptr::read_unaligned(
+        (taskinfo + TASKINFO_UVSTATE + TASKINFO_UVSTATE_STRIDE * key as usize) as *const usize,
+    );
+    if uvstate == 0 {
+        return 0;
+    }
+    core::ptr::read_unaligned((uvstate + UVSTATE_LOOP) as *const usize)
+}
+
+/// Create the eight-byte native scan wrapper with stock scan settings.
 /// The wrapper and callbacks remain owned by the firmware until started with
 /// nonzero status or stopped; the common backend retains that terminal handle.
 ///

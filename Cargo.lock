@@ -13,18 +13,18 @@ dependencies = [
 
 [[package]]
 name = "canopus-abi"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "canopus-runtime"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "canopus-abi",
 ]
 
 [[package]]
 name = "canopus-target-generated"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "canopus-abi",
 ]

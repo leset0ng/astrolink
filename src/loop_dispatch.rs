@@ -47,7 +47,40 @@ impl PipeWake {
                 Err(result)
             }
         }
-        #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+        #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+        {
+            let read_fd = ptr::read_unaligned((loop_pointer + abi::LOOP_READ_FD) as *const i32);
+            let write_fd = ptr::read_unaligned((loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
+            if read_fd < 0 || write_fd < 0 || read_fd == write_fd {
+                return Err(-9);
+            }
+            let mut files = [ptr::null_mut::<c_void>(); 2];
+            let result = (|| {
+                for (fd, file) in [read_fd, write_fd].into_iter().zip(files.iter_mut()) {
+                    let status = fw!(
+                        abi::F_FS_GETFILEP,
+                        unsafe extern "C" fn(i32, *mut *mut c_void) -> i32
+                    )(fd, file);
+                    if status != 0 {
+                        return Err(status);
+                    }
+                }
+                if !pipe_pair(files[0], files[1]) {
+                    return Err(-9);
+                }
+                self.duplicate(files[1])
+            })();
+            for file in files {
+                if !file.is_null() {
+                    fw!(abi::F_FS_PUTFILEP, unsafe extern "C" fn(*mut c_void) -> i32)(file);
+                }
+            }
+            result
+        }
+        #[cfg(not(any(
+            feature = "target-xiaomi-band-9-3-1-32",
+            feature = "target-redmi-watch-6-3-100-043"
+        )))]
         {
             let fd = ptr::read_unaligned((loop_pointer + abi::LOOP_WRITE_FD) as *const i32);
             let mut source = ptr::null_mut::<c_void>();
@@ -81,7 +114,10 @@ impl PipeWake {
 
     /// Resolve a process-lifetime default loop by its owning task's TLS
     /// identity, not by the caller's fd table or a fixed PID.
-    #[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+    #[cfg(not(any(
+        feature = "target-xiaomi-band-9-3-1-32",
+        feature = "target-redmi-watch-6-3-100-043"
+    )))]
     pub(crate) unsafe fn capture_default_loop(&mut self, loop_pointer: usize) -> Result<(), i32> {
         if self.open {
             return Ok(());
@@ -126,6 +162,12 @@ impl PipeWake {
         if copied == 0 {
             Ok(())
         } else {
+            #[cfg(feature = "target-redmi-watch-6-3-100-043")]
+            {
+                // P65 rolls back inode ownership but leaves destination fields.
+                // A retry must not close that unowned, partially copied file.
+                self.file = [0; 4];
+            }
             Err(copied)
         }
     }
@@ -201,14 +243,20 @@ impl PipeWake {
     }
 }
 
-#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+#[cfg(not(any(
+    feature = "target-xiaomi-band-9-3-1-32",
+    feature = "target-redmi-watch-6-3-100-043"
+)))]
 struct Lookup {
     loop_pointer: usize,
     key: u32,
     read: *mut c_void,
     write: *mut c_void,
 }
-#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+#[cfg(not(any(
+    feature = "target-xiaomi-band-9-3-1-32",
+    feature = "target-redmi-watch-6-3-100-043"
+)))]
 fn ram_pointer(address: usize) -> bool {
     (0x20000000..0x40000000).contains(&address) && address & 3 == 0
 }
@@ -216,7 +264,10 @@ fn ram_pointer(address: usize) -> bool {
 unsafe fn word(address: usize) -> usize {
     ptr::read_unaligned(address as *const usize)
 }
-#[cfg(not(feature = "target-xiaomi-band-9-3-1-32"))]
+#[cfg(not(any(
+    feature = "target-xiaomi-band-9-3-1-32",
+    feature = "target-redmi-watch-6-3-100-043"
+)))]
 unsafe extern "C" fn find_loop_files(tcb: usize, lookup: *mut Lookup) {
     let lookup = &mut *lookup;
     if !lookup.read.is_null() || !lookup.write.is_null() || tcb == 0 {

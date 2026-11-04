@@ -1,0 +1,60 @@
+{
+  "target": "redmi-watch-6-3.100.043",
+  "firmwareSha256": "a19b601477569765103eaf468b937bd8026b4d68ffa5c896bde222a79e475858",
+  "scope": "host/build verification and isolated installation/activation passed; native lifecycle failed during QuickApp startup",
+  "hostTests": { "passed": 42, "failed": 0 },
+  "armClippy": {
+    "redmi-watch-6-3.100.043": "passed with -D warnings",
+    "xiaomi-band-11-4.100.155": "passed with -D warnings"
+  },
+  "format": "cargo fmt --check passed",
+  "whitespace": "git diff --check passed",
+  "targetGeneration": "current SDK CLI regenerated the new data binding; --check passed",
+  "experimentalPackage": {
+    "versionCode": 45,
+    "path": "/tmp/astrolink-p65-validation-v45.canopus",
+    "verification": "passed",
+    "activationGateInArtifact": true,
+    "activationGateInSource": false,
+    "elfSha256": "a6e99d15e62cf5d0c33cc73a1226141b6d8f3a3cc470e6190c6960c1005f35c2",
+    "residentBytes": 71369,
+    "undefinedSymbols": 0,
+    "relocations": 1227
+  },
+  "probe": {
+    "path": "examples/quickapp/dist/astrolink-probe-source.rpk",
+    "sha256": "65597050d2f4a6df1b77f4db98f04139ca1542151d235d30a914c26e5cb9710f",
+    "typecheckAndBuild": "passed",
+    "nativeLifecycle": "failed: no checks or terminal event captured; launch followed by device reboot; repeat exception trace recorded INVSTATE UsageFault",
+    "nativeLifecycleEvidence": "/tmp/astrolink-p65-v45-native-probe",
+    "faultReproductionEvidence": "/tmp/astrolink-p65-v45-fault-reproduce",
+    "stockBaseline": "same launch request without a loaded module caused no additional reboot during the bounded observation window; no native probe pass inferred"
+  },
+  "runtime": {
+    "library": "/tmp/astrolink-p65-validation",
+    "device": "astrolink-p65-043",
+    "supervisorSha256": "52c9e345ff5d0ff3c2b20247278d19f571aa3a3f9ca3ef81cd243c38afb0f20e",
+    "supervisorFreshness": {
+      "localAndRemoteMain": "81ba8d9ad90a6b3ab29622795aed8580148c26ec",
+      "includedP65MpuFix": "7b0dceefaa312e475be83179bfab3822ea42a8a7",
+      "latestRebuild": "passed; Supervisor and stage2 are byte-identical to the files read back from isolated NAND",
+      "installedStage2Sha256": "9eaceae46993e2a4e2ea11b479275f813e4edad7bd4da3a92c0842961552ced1"
+    },
+    "directInsmod": "device rebooted before prompt; no exact fault instruction captured",
+    "stagedLoad": "production cave/stage1/stage2 sequence returned zero and created /dev/canopus",
+    "companionQuery": "passed through real encrypted channel5 transport; targetId matched, safeMode false, errorCode zero",
+    "companionTransport": "temporary bridge orders advertised RFCOMM channel5 first; original shared bridge source unchanged",
+    "classicAuthentication": "fresh SSP and encryption passed after replacing only the isolated stale link-key cache",
+    "astrolinkInstalled": true,
+    "installedVersion": 45,
+    "activation": { "state": 13, "activationError": 0, "evidence": "/tmp/astrolink-p65-v45-activate" },
+    "installationAttempts": [
+      { "evidence": "/tmp/astrolink-p65-v45-install", "result": "CPC2 command15 STAGE_BEGIN returned Failed; staging inbox absent" },
+      { "evidence": "/tmp/astrolink-p65-v45-install-inbox", "result": "request timed out after offline inbox creation and staged reload; foreground owner pump had not bootstrapped" },
+      { "evidence": "/tmp/astrolink-p65-v45-install-awake", "result": "module v45 and probe RPK installed successfully after waking and verifying real Supervisor query" }
+    ],
+    "gatedSourceBuildRestored": "passed; regular build output matches SUPPORTED=false after preserving enabled experimental package in /tmp",
+    "bidirectionalCoc": "not run: blocked by startup UsageFault",
+    "physicalRadio": "not tested"
+  }
+}

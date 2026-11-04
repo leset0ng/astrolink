@@ -1426,6 +1426,31 @@ pub unsafe fn install(context: *const CanopusContext) -> Result<(), Error> {
     Ok(())
 }
 
+/// Queue owner-task work only after activation and an actual GAP request.
+#[cfg(all(
+    feature = "device",
+    target_arch = "arm",
+    feature = "target-redmi-watch-6-3-100-043"
+))]
+pub(crate) fn post_ui(callback: canopus_abi::CbUiTask) -> Result<(), Error> {
+    let context = CONTEXT.load(Ordering::Acquire);
+    if !ACTIVE.load(Ordering::Acquire) || context.is_null() {
+        return Err(Error::NotReady);
+    }
+    unsafe {
+        let ui = (*context).ui;
+        if ui.is_null() {
+            return Err(Error::Unsupported);
+        }
+        let result = ((*ui).post)(context.cast(), callback, ::core::ptr::null_mut());
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(Error::Backend(result))
+        }
+    }
+}
+
 /// Roll back activation before the native Feature publishes any JS owners.
 pub unsafe fn rollback_before_feature() {
     ACTIVE.store(false, Ordering::Release);

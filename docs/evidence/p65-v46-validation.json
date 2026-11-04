@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "target": "redmi-watch-6-3.100.043",
+  "moduleVersionCode": 46,
+  "scope": "Application slot27 regression fixed and verified in an independent emulator clone; later native-interface load still fails",
+  "defaultSupported": false,
+  "correction": {
+    "source": "src/abi/redmi_watch_6_3_100_043.rs",
+    "vtablePrefixWords": 2,
+    "applicationCopyWordsBefore": 29,
+    "applicationCopyWordsAfter": 30,
+    "primarySlotsRetained": "0..27",
+    "firmwareSlot27Load": "0x0c9fd416",
+    "firmwareIndirectCall": "0x0c9fd558",
+    "originalFault": {
+      "copiedSlot27": "0x00000000",
+      "originalSlot27": "0x0c9fc601",
+      "stackedPc": "0x00000000",
+      "stackedLr": "0x0c9fd55b",
+      "cfsr": "0x00020000",
+      "initDetail": 203,
+      "evidence": "/tmp/canopus-p65-diag-boundary"
+    }
+  },
+  "build": {
+    "hostTestsPassed": 42,
+    "format": "passed",
+    "armClippy": ["redmi-watch-6-3.100.043 (enabled path)", "xiaomi-band-11-4.100.155"],
+    "elfVerification": "passed",
+    "packageVerification": "passed",
+    "residentBytes": 71369,
+    "undefinedSymbols": 0,
+    "relocations": 1227,
+    "enabledElf": "/tmp/astrolink-p65-v46-enabled-validation.elf",
+    "enabledElfSha256": "5c597c19fd5939f73ee17105580f286050d70e0403c6e4a7b75e02a816877262",
+    "package": "/tmp/astrolink-p65-validation-v46.canopus",
+    "packageSha256": "9b12687ba93649eb3c8da8945c931e21c61aee31204f1d3fbdccf1ffaba74974",
+    "defaultGateAndGatedBuildRestored": true
+  },
+  "runtime": {
+    "library": "/tmp/astrolink-p65-v46-validation",
+    "device": "astrolink-p65-v46",
+    "hostDeviceUuid": "B65E0046-DCCD-4804-A89C-94E75D515805",
+    "bluetoothPort": 59021,
+    "supervisorAndStage2": "unchanged production artifacts verified against current main in the preceding validation",
+    "initialUpgradeAttempt": "excluded: post-reboot query and installed ELF readback still showed v45",
+    "cleanInstall": "/tmp/astrolink-p65-v46-clean-install",
+    "cleanEnable": "/tmp/astrolink-p65-v46-clean-enable",
+    "cleanActivate": "/tmp/astrolink-p65-v46-clean-activate",
+    "activation": {"version": 46, "state": 13, "activationError": 0},
+    "slot27Regression": {
+      "passed": true,
+      "application": "0x3c6ed010",
+      "originalVptr": "0x3c3275e0",
+      "copiedVptr": "0x3c6e8758",
+      "copiedSlot27": "0x0c9fc601",
+      "originalSlot27": "0x0c9fc601",
+      "r3AfterLoad": "0x0c9fc601",
+      "r2Comparator": "0x0c9fc601",
+      "destructionOverrideSlot19": "0x3c6ddc29",
+      "usageFaultObservationSecondsAfterLoad": 75,
+      "usageFaultHandlerHit": false,
+      "observerDetachedNormally": true,
+      "evidence": "/tmp/astrolink-p65-v46-boundary/stops.jsonl"
+    },
+    "lifecycle": {
+      "passed": false,
+      "checksPassed": 0,
+      "pageInitCaptured": true,
+      "step": "加载原生 Feature",
+      "error": "cannot read property 'subscribe' of null",
+      "causeOfLaterFailure": "not established by this correction",
+      "evidence": "/tmp/astrolink-p65-v46-native-probe"
+    },
+    "postProbeQuery": {"version": 46, "state": 13, "activationError": 0, "evidence": "/tmp/astrolink-p65-v46-post-probe"},
+    "stoppedInstalledElfReadbackMatchesEnabledBuild": true,
+    "installedElfReadback": "/tmp/astrolink-p65-v46-installed-check.elf",
+    "finalDeviceState": "stopped",
+    "originalStoppedLibraryPreserved": true,
+    "originalDiagnosticProcess379Preserved": true,
+    "gapAndBidirectionalCoc": "not validated"
+  }
+}
