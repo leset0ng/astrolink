@@ -3,6 +3,10 @@
 Scope: exact Redmi Watch 6 firmware `3.100.043`. This is emulator evidence;
 physical-radio and bidirectional CoC acceptance remain separate.
 
+Historical v46 regression record. Follow-up binding, buffer and loading fixes
+reach a formal18/18 source lifecycle probe in v49; see
+`docs/p65-native-publication.md` and `docs/evidence/p65-v49-validation.json`.
+
 ## Confirmed v45 failure
 
 The legacy initializer replaces the Application primary vptr with

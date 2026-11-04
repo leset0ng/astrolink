@@ -548,7 +548,7 @@ packages:
     engines: {node: '>=6.9.0'}
 
   '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz':
-    resolution: {integrity: sha512-PFx2LUwmeG/pbgwr3M2q1NxTDvO3hJG6OVo64MYEFFYWAGVHPBRm00FcDG37AX+RzH1KgZXWirzTozGpoW3Oqw==, tarball: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz}
+    resolution: {integrity: sha512-6arR4xwZ9219ZEZ4BmZqJ9eLbauqioUtyIKlmfEYJB4CT4Lq2kPEecozitjJQNLpRZJoUcuhCp9wi2CnzSeWYQ==, tarball: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz}
     version: 0.1.1
 
   '@discoveryjs/json-ext@0.5.7':

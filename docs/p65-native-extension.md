@@ -212,8 +212,18 @@ BLX R3 at 0x0C9FD558. The saved target and PC were zero.
 
 The P65 copy is now 30 words, retaining slot27. The fresh v46 runtime regression
 reads the original 0x0C9FC601 from the copied table and reaches JavaScript without
-the original startup fault. Its native-interface loading still fails with
-`cannot read property 'subscribe' of null`, before any lifecycle checks. No GAP,
-lifecycle or CoC acceptance is claimed. `SUPPORTED` remains false. See
-`docs/p65-v46-runtime-validation.md` for the correction and runtime evidence;
-`docs/p65-runtime-validation.md` preserves the v45 failure and transport setup.
+the original startup fault. Its next failure was native-interface loading.
+
+Follow-up runtime/static correlation found two wrong generated bindings:
+property-definition0x0C6D3320 was a global-constructor installer, corrected to
+0x0C6D3210; Bluelet queue0x1C1676C8 was owner-local insertion without idle wake,
+corrected to the synchronized external queue0x1C167D40. The P65 ArrayBuffer
+payload pointer is object+40, not+8. The SDK also now reads the unshadowed
+legacy global because the toolkit supplies a separate globalThis wrapper.
+
+With those corrections, fresh v49 activation reaches state13/error0 and the
+formal source lifecycle probe passes18/18, including scan/advertising and two
+Session recreation/release rounds. Bidirectional CoC and physical-radio
+acceptance remain pending; `SUPPORTED` remains false. See
+`docs/p65-native-publication.md` and `docs/evidence/p65-v49-validation.json`.
+The v45/v46 reports preserve their respective failure and regression evidence.

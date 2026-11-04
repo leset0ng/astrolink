@@ -272,7 +272,8 @@ pub const HANDLE_LOOP: usize = 0;
 pub const PROTOTYPE_MANAGER: usize = 0;
 pub const INSTANCE_HANDLE: usize = 0;
 pub const JSVALUE_CLASS_OFFSET: usize = 6;
-pub const ARRAY_BUFFER_DATA: usize = 8;
+// JS_GetArrayBuffer reads the JSObject payload at +0x28, then detached at +4.
+pub const ARRAY_BUFFER_DATA: usize = 40;
 pub const ARRAY_BUFFER_DETACHED: usize = 4;
 
 pub const FEATURE_ASYNC_WORDS: usize = 32;
@@ -454,6 +455,8 @@ pub unsafe fn qjs_to_cstring_len2(
 }
 
 /// Define an own property through the direct engine string-name wrapper.
+/// P65 entry 0x0c6d3210 is the stock method-installation consumer. The nearby
+/// 0x0c6d3320 installs global constructors and does not implement this ABI.
 ///
 /// # Safety
 /// Context and values must belong to the live JS task. Name is NUL terminated;

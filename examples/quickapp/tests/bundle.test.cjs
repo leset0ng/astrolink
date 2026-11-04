@@ -5,9 +5,9 @@ const vm = require("node:vm")
 const { test } = require("node:test")
 const { primitive } = require("./primitive.cjs")
 
-function environment(loadFeature) {
+function environment(loadFeature, native = {}) {
   const global = { setTimeout, clearTimeout, setInterval, clearInterval }
-  const context = vm.createContext({ console, globalThis: global, $app_require$: loadFeature })
+  const context = vm.createContext({ console, ...native, globalThis: global, $app_require$: loadFeature })
   function load(relative) {
     const source = fs.readFileSync(path.join(__dirname, "../build", relative), "utf8")
     const wrapper = vm.runInContext(`(${source.replace(/^export default /, "")})`, context)
@@ -65,6 +65,29 @@ test("separately bundled app and page share one primitive subscription and Sessi
   for (let i = 0; i < 12; i++) await Promise.resolve()
   assert.equal(raw.unsubscriptions, 1)
   assert.equal(env.global.__astrolinkExampleController, undefined)
+  assert.equal(env.global.__canopusAstrolinkFacade, undefined)
+})
+
+test("legacy primitive on the real global survives a separate wrapper globalThis", async () => {
+  const raw = primitive()
+  let required = 0
+  const env = environment(() => { required++; return null }, {
+    __canopusAstrolinkNative: raw.feature
+  })
+  const app = env.load("app.js")
+  const page = env.load("pages/index/index.js")
+  const state = { ...page.data, ...page }
+  state.onInit()
+  assert.equal(state.ready, true)
+  assert.equal(required, 0)
+  assert.equal(raw.sessions.size, 1)
+  assert.equal(raw.subscriptions, 1)
+  app.onDestroy()
+  state.onDestroy()
+  await Promise.resolve()
+  raw.complete()
+  for (let i = 0; i < 12; i++) await Promise.resolve()
+  assert.equal(raw.unsubscriptions, 1)
   assert.equal(env.global.__canopusAstrolinkFacade, undefined)
 })
 

@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "target": "redmi-watch-6-3.100.043",
+  "moduleVersionCode": 49,
+  "previousCommit": "bde92f3",
+  "defaultSupported": false,
+  "scope": "isolated emulator native lifecycle/GAP acceptance; bidirectional CoC and physical radio not validated",
+  "corrections": {
+    "propertyDefinition": {
+      "oldEntry": "0x0c6d3320",
+      "newEntry": "0x0c6d3210",
+      "evidence": "EVID-ASTROLINK-P65-QJS-DEFINE-005"
+    },
+    "arrayBufferPayloadOffset": {
+      "before": 8,
+      "after": 40,
+      "accessorLoad": "0x0c717274"
+    },
+    "externalQueue": {
+      "oldEntry": "0x1c1676c8",
+      "newEntry": "0x1c167d40",
+      "implementation": "0x0c98fdd0",
+      "wakePost": "0x0c98feb8",
+      "evidence": "EVID-ASTROLINK-P65-BLUELET-QUEUE-006"
+    },
+    "loader": "guarded bare __canopusAstrolinkNative lookup before the existing Feature fallback; wrapper facade caching retained"
+  },
+  "intermediateRuns": [
+    {
+      "version": 47,
+      "checksPassed": 3,
+      "error": "INVALID_ARGUMENT closing boundary Session; incorrect ArrayBuffer payload offset"
+    },
+    {
+      "version": 48,
+      "checksPassed": 15,
+      "error": "recreated Session close delayed 30.841s until unrelated companion traffic; wrong owner-local queue binding"
+    }
+  ],
+  "build": {
+    "sdkTestsPassed": 11,
+    "bundleTestsPassed": 4,
+    "compiledRegression": "failed before loader fix, passed after",
+    "p65ArmClippy": "passed with -D warnings",
+    "format": "passed",
+    "generationCheck": "passed",
+    "elfVerification": "passed",
+    "packageVerification": "passed",
+    "residentBytes": 71369,
+    "undefinedSymbols": 0,
+    "relocations": 1227,
+    "enabledElf": "/tmp/astrolink-p65-v49-enabled-validation.elf",
+    "enabledElfSha256": "741077f30c0a25990e8c5774201c9e65546a3ba73d0eff4240404a8021df464a",
+    "package": "/tmp/astrolink-p65-validation-v49.canopus",
+    "packageSha256": "21659e510d42a1390a8d62cd37a4706e36d8531e1852c7fafc6a8d9a4d02e0a6",
+    "probeSha256": "7ca544316a9f0e019c870717f93364dbb50f8c6db2c1351ec7c6663646c53ea4",
+    "normalGatedBuildRestored": true
+  },
+  "runtime": {
+    "library": "/tmp/astrolink-p65-v46-validation",
+    "device": "astrolink-p65-v46",
+    "deviceNameNote": "historical host names reused; actual queried module version49",
+    "freshInstall": "/tmp/astrolink-p65-v49-install",
+    "enable": "/tmp/astrolink-p65-v49-enable",
+    "activate": "/tmp/astrolink-p65-v49-activate",
+    "module": {
+      "slot": 0,
+      "moduleId": "astrolink",
+      "version": 49,
+      "state": 13,
+      "lifecycleClass": 1,
+      "flags": 0,
+      "activationError": 0
+    },
+    "lifecycle": {
+      "passed": true,
+      "checksPassed": 18,
+      "failures": [],
+      "completed": {
+        "sequence": 37,
+        "event": "complete",
+        "step": "18 项检查已完成",
+        "passed": 18
+      }
+    },
+    "sourceProbe": "/tmp/astrolink-p65-v49-native-probe",
+    "diagnosticRpk": false,
+    "debuggerBreakpoints": false,
+    "recreatedSessionReleaseElapsedMs": [
+      49,
+      47
+    ],
+    "completionBeforeCompanionDisconnect": true,
+    "postProbeQuery": {
+      "version": 49,
+      "state": 13,
+      "activationError": 0,
+      "evidence": "/tmp/astrolink-p65-v49-post-probe"
+    },
+    "installedElfReadbackMatchesEnabledBuild": true,
+    "installedElfReadback": "/tmp/astrolink-p65-v49-installed-check.elf",
+    "finalCloneState": "stopped",
+    "originalStoppedLibraryPreserved": true,
+    "originalDiagnosticProcess379Preserved": true
+  },
+  "limitations": [
+    "Bidirectional LE CoC, HELLO/SDU exchange not tested.",
+    "No physical-radio or production approval.",
+    "Target-pack symbols remain restricted/PENDING; default SUPPORTED=false."
+  ]
+}

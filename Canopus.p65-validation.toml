@@ -3,12 +3,12 @@ schema = 1
 [module]
 id = "astrolink"
 version = "0.1.0"
-version_code = 46
+version_code = 49
 kind = "target"
 language = "rust"
 lifecycle = "resident-after-activation"
 canopus_abi = "2"
-description = "P65 virtual-table startup regression validation"
+description = "P65 native lifecycle and idle Bluelet queue regression validation"
 
 [build]
 sources = ["Cargo.toml"]

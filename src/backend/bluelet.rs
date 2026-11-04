@@ -1087,7 +1087,8 @@ fn enqueue(service: Service, action: Action, bytes: &[u8]) -> Result<(), Error> 
         }
         return Ok(());
     }
-    // CoC requests use Bluelet's owner.
+    // CoC requests use Bluelet's synchronized external queue. P65's internal
+    // owner-only insertion helper does not wake an idle Bluelet task.
     // The return value is a semaphore operation, not an acceptance status.
     // Failure/cancellation goes through cancel_work, including owner shutdown.
     unsafe {
