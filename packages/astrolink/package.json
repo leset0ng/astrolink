@@ -2,7 +2,7 @@
   "name": "@lesetong/astrolink",
   "version": "0.1.1",
   "description": "Event-driven Session/Link API for the Canopus Astrolink BLE native Feature",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
   "module": "./dist/esm/index.mjs",

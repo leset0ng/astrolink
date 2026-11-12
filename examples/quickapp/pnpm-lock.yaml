@@ -741,7 +741,7 @@ packages:
     resolution: {integrity: sha512-GaHYm+c0O9MjZRu0ongGBRbinu8gVAMd2UZjji6jVmqKtZluZnptXGWhz1E8j8D2HJ3f/yMxKAUC0b+57wncIw==}
 
   '@lesetong/astrolink@file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz':
-    resolution: {integrity: sha512-2LjuoL8raArQbHnpdvue+8vhg5q4NY8NFFql31R7XC73ySpHnOKOhlQufBbanYkkH5ljvqQ1Zk1jRA+0NEXvpQ==, tarball: file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz}
+    resolution: {integrity: sha512-U7Vzt27euta/Q9Ofutayg4pTAxBY3dPP94BWgol5Hyjx/G0ScS14YtCtn7xGD8VT0FqeLxiHYM61578k+TzRYA==, tarball: file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz}
     version: 0.1.1
 
   '@miwt/adb@0.10.1':
