@@ -113,7 +113,10 @@ fn advertisement_rejects_bad_version_psm_duplication_and_bounds() {
     for (offset, value) in [(5, 0), (21, 1), (22, 0x7f)] {
         let mut bad = valid.clone();
         bad[offset] = value;
-        assert!(Advertisement::decode(&bad, uuid).is_none(), "offset {offset}");
+        assert!(
+            Advertisement::decode(&bad, uuid).is_none(),
+            "offset {offset}"
+        );
     }
     let mut duplicate = valid.clone();
     duplicate.extend_from_slice(&valid[3..]);
