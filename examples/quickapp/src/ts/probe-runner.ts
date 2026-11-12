@@ -1,5 +1,5 @@
-import { loadAstrolink } from "@canopus/astrolink"
-import type { Astrolink, Capabilities, Session } from "@canopus/astrolink"
+import { loadAstrolink } from "@lesetong/astrolink"
+import type { Astrolink, Capabilities, Session } from "@lesetong/astrolink"
 
 const STEP_TIMEOUT_MS = 10_000
 const LOG_LIMIT = 12

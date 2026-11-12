@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@canopus/astrolink':
-        specifier: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz
-        version: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz
+      '@lesetong/astrolink':
+        specifier: file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz
+        version: file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz
     devDependencies:
       '@aiot-toolkit/jsc':
         specifier: 1.0.9
@@ -547,10 +547,6 @@ packages:
     resolution: {integrity: sha512-WCsemW40Cpc6gouC1SrY6PBaZ+oLRlEVY9XBvZBI7il/HyUrb2nJ505wE1MHEFyDZNnrWDEuy4jL50WVHfTTSQ==}
     engines: {node: '>=6.9.0'}
 
-  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz':
-    resolution: {integrity: sha512-6arR4xwZ9219ZEZ4BmZqJ9eLbauqioUtyIKlmfEYJB4CT4Lq2kPEecozitjJQNLpRZJoUcuhCp9wi2CnzSeWYQ==, tarball: file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz}
-    version: 0.1.1
-
   '@discoveryjs/json-ext@0.5.7':
     resolution: {integrity: sha512-dBVuXR082gk3jsFp7Rd/JI4kytwGHecnCoTtXFb7DB6CNHp4rg5k1bhg0nWdLGLnOV71lmDzGQaLMy8iPLY0pw==}
     engines: {node: '>=10.0.0'}
@@ -743,6 +739,10 @@ packages:
 
   '@kwsites/promise-deferred@1.1.1':
     resolution: {integrity: sha512-GaHYm+c0O9MjZRu0ongGBRbinu8gVAMd2UZjji6jVmqKtZluZnptXGWhz1E8j8D2HJ3f/yMxKAUC0b+57wncIw==}
+
+  '@lesetong/astrolink@file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz':
+    resolution: {integrity: sha512-2LjuoL8raArQbHnpdvue+8vhg5q4NY8NFFql31R7XC73ySpHnOKOhlQufBbanYkkH5ljvqQ1Zk1jRA+0NEXvpQ==, tarball: file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz}
+    version: 0.1.1
 
   '@miwt/adb@0.10.1':
     resolution: {integrity: sha512-6ZPBPQUTEGiD/pSU+GMD0/1t3dGIcD2bo9XE3f3GcqjJXXlh0CED+hFHqQhJVyBKGIBeGy7zbknPVV9LVsyTGg==}
@@ -3845,8 +3845,6 @@ snapshots:
       '@babel/helper-string-parser': 7.29.11
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@canopus/astrolink@file:../../packages/astrolink/dist/canopus-astrolink-0.1.1.tgz': {}
-
   '@discoveryjs/json-ext@0.5.7': {}
 
   '@emnapi/core@1.11.3':
@@ -4147,6 +4145,8 @@ snapshots:
       - supports-color
 
   '@kwsites/promise-deferred@1.1.1': {}
+
+  '@lesetong/astrolink@file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz': {}
 
   '@miwt/adb@0.10.1': {}
 

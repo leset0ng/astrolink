@@ -26,7 +26,7 @@ pnpm build
 
 应用包名为 `com.canopus.astrolink.example`。先在目标设备安装与其精确固件匹配的 Astrolink 模块并激活，再通过 Mirage 的应用安装功能或 AstroBox 安装 RPK。仅安装 RPK 不会安装原生模块。
 
-示例通过 `import { loadAstrolink } from "@canopus/astrolink"` 使用可独立安装的 npm 包。`package.json` 依赖的是 `file:../../packages/astrolink/dist/canopus-astrolink-0.1.0.tgz`，pnpm lock 保存其完整性校验；没有直接引用或复制包源码。修改包后重新 `pnpm pack:npm`，再在示例目录执行 `pnpm update @canopus/astrolink` 更新 tarball 完整性与安装内容。
+示例通过 `import { loadAstrolink } from "@lesetong/astrolink"` 使用可独立安装的 npm 包。`package.json` 依赖的是 `file:../../packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz`，pnpm lock 保存其完整性校验；没有直接引用或复制包源码。修改包后重新 `pnpm pack:npm`，再在示例目录执行 `pnpm update @lesetong/astrolink` 更新 tarball 完整性与安装内容。
 
 已确认原生 Feature 名为 `canopus.astrolink`，集中在 `packages/astrolink/src/native.ts` 和示例的 `src/manifest.json`。加载使用固件的 `$app_require$("@app-module/canopus.astrolink")`，与工具链生成系统 Feature 调用所用的机制相同。
 

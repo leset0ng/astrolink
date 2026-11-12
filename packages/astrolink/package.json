@@ -1,5 +1,5 @@
 {
-  "name": "@canopus/astrolink",
+  "name": "@lesetong/astrolink",
   "version": "0.1.1",
   "description": "Event-driven Session/Link API for the Canopus Astrolink BLE native Feature",
   "license": "UNLICENSED",

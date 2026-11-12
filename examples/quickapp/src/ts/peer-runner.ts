@@ -1,5 +1,5 @@
-import { loadAstrolink } from "@canopus/astrolink"
-import type { Astrolink, Link, Session } from "@canopus/astrolink"
+import { loadAstrolink } from "@lesetong/astrolink"
+import type { Astrolink, Link, Session } from "@lesetong/astrolink"
 import { makeProbe, parseProbe, verifyResponse } from "./probe"
 
 const STEP_TIMEOUT_MS = 15_000

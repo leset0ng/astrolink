@@ -111,7 +111,7 @@ P67 对照：PSM register/unregister `0x0C805A80` / `0x0C805AC4`；connect queue
 
 P67 `FeatureRegisterFeature` 对照为 `0x0C862898`。这些证据支持“有注册、投递和销毁接入路径”，但 FeatureDescription/member ABI、JSValue 布局、registry 获取、manifest 权限、动态注销和 module unload 安全性均未完整恢复。
 
-`0x0C721680` 虽涉及 `@aiot/`/system module resolver，但属于 compiler 路径，不能据此断言运行时接受 `@canopus/astrolink`。最终 import/require 拼写、快应用构建期可见性需在 P0 验证；本文 API 名称表达开发者契约。
+`0x0C721680` 虽涉及 `@aiot/`/system module resolver，但属于 compiler 路径，不能据此断言运行时接受 `@lesetong/astrolink`。最终 import/require 拼写、快应用构建期可见性需在 P0 验证；本文 API 名称表达开发者契约。
 
 P0 建议先以双机 native SDU echo 验证射频链路，同时用独立 QJS 探针验证 Feature 注册、任务投递、Promise 和销毁；两项通过再整合，不把复杂业务混入 ABI 调试。
 
@@ -197,7 +197,7 @@ serviceId 只用于业务匹配。
 
 **QJS API 草案**
 
-`@canopus/astrolink` 是建议名称，最终导入方式需在 P0 验证。Session 的 serviceId 必填；Session 自己拥有一组扫描/广播状态，因此无需再返回两种操作句柄对象。
+`@lesetong/astrolink` 是建议名称，最终导入方式需在 P0 验证。Session 的 serviceId 必填；Session 自己拥有一组扫描/广播状态，因此无需再返回两种操作句柄对象。
 
 ```ts
 interface Astrolink {

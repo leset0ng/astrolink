@@ -1,6 +1,6 @@
-import type { Advertisement, Astrolink, Capabilities, Link, Session, Unsubscribe } from "@canopus/astrolink"
+import type { Advertisement, Astrolink, Capabilities, Link, Session, Unsubscribe } from "@lesetong/astrolink"
 import { makeProbe, makeResponse, parseProbe, verifyResponse } from "./probe"
-import { utf8ByteLength } from "@canopus/astrolink"
+import { utf8ByteLength } from "@lesetong/astrolink"
 
 const SERVICE_ID = "chat"
 const MAX_PEERS = 12

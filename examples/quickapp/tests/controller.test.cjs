@@ -2,7 +2,7 @@ const assert = require("node:assert/strict")
 const { test } = require("node:test")
 const { TestController } = require("../.test-build/controller")
 const { makeProbe, parseProbe, makeResponse, verifyResponse } = require("../.test-build/probe")
-const { utf8ByteLength } = require("@canopus/astrolink")
+const { utf8ByteLength } = require("@lesetong/astrolink")
 
 // Test-only native fixtures exercise app behavior; they are never bundled in the RPK.
 function fixture() {

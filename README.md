@@ -35,18 +35,18 @@ acceptance limits.
 Installable outputs:
 
 - Native module: `dist/astrolink-0.1.0.canopus` (version code 44).
-- npm package: `packages/astrolink/dist/canopus-astrolink-0.1.1.tgz`.
+- npm package: `packages/astrolink/dist/lesetong-astrolink-0.1.1.tgz`.
 - Example: `examples/quickapp/dist/astrolink-example-source.rpk` or
   `astrolink-example-bytecode.rpk` in that directory.
 - Standalone lifecycle probe: `examples/quickapp/dist/astrolink-probe-source.rpk`.
 
 ```sh
-npm install /absolute/path/to/canopus-astrolink-0.1.1.tgz
+npm install /absolute/path/to/lesetong-astrolink-0.1.1.tgz
 ```
 
 ## QuickApp API
 
-The TypeScript package `@canopus/astrolink` wraps the firmware native Feature
+The TypeScript package `@lesetong/astrolink` wraps the firmware native Feature
 `canopus.astrolink`. Declare the Feature in the application's manifest:
 
 ```json
@@ -60,7 +60,7 @@ message boundaries and cleanup. See the package's README for installation and
 its generated type declarations for the full API.
 
 ```ts
-import { loadAstrolink } from '@canopus/astrolink'
+import { loadAstrolink } from '@lesetong/astrolink'
 
 const astrolink = loadAstrolink()
 const session = astrolink.createSession({ serviceId: 'chat' })

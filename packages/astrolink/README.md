@@ -1,4 +1,4 @@
-# @canopus/astrolink
+# @lesetong/astrolink
 
 TypeScript / JavaScript Session/Link API for the Canopus Astrolink BLE native Feature. The package contains compiled ES2015 ESM and CommonJS JavaScript plus TypeScript declarations, with **zero runtime npm dependencies**. ESM uses explicit `.mjs` entries and CommonJS uses `.cjs`, so aiot-toolkit’s JavaScript loaders cannot misclassify one module format as the other. It uses native events; no polling, file IPC or alternate Bluetooth transport is included.
 
@@ -15,10 +15,10 @@ pnpm test
 pnpm pack:npm
 ```
 
-The resulting artifact is `dist/canopus-astrolink-0.1.0.tgz`. Install that file in a QuickApp:
+The resulting artifact is `dist/lesetong-astrolink-0.1.1.tgz`. Install that file in a QuickApp:
 
 ```sh
-npm install /absolute/path/to/canopus-astrolink-0.1.0.tgz
+npm install /absolute/path/to/lesetong-astrolink-0.1.1.tgz
 ```
 
 Declare the native Feature in the QuickApp `src/manifest.json`:
@@ -32,7 +32,7 @@ The package can be bundled by aiot-toolkit as an ordinary npm dependency. Do not
 ## Use
 
 ```ts
-import astrolink, { type Link } from "@canopus/astrolink"
+import astrolink, { type Link } from "@lesetong/astrolink"
 
 const caps = astrolink.getCapabilities()
 if (!caps.supported) throw new Error("Unsupported firmware")
@@ -59,7 +59,7 @@ await session.startScan()
 Importing the package is lazy: it does not immediately require the native Feature. To catch missing-module errors explicitly:
 
 ```ts
-import { loadAstrolink } from "@canopus/astrolink"
+import { loadAstrolink } from "@lesetong/astrolink"
 
 try {
   const astrolink = loadAstrolink()

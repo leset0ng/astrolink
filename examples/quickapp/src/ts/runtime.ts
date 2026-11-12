@@ -1,5 +1,5 @@
 import { TestController } from "./controller"
-import { loadAstrolink, disposeAstrolink } from "@canopus/astrolink"
+import { loadAstrolink, disposeAstrolink } from "@lesetong/astrolink"
 
 // The toolkit emits app.js and page.js as separate bundles. Their module-local
 // variables cannot share Session ownership, so keep one app-global controller.
